@@ -38,6 +38,7 @@ model's prose is never the evidence that a mutation occurred.
 | Audit writes | `agent_actions` rows are written with the service role — clients have no INSERT policy, so the audit trail cannot be forged or skipped. If the audit write fails, the request fails. |
 | Secrets | `ANTHROPIC_API_KEY` exists only as an Edge Function secret. The Flutter client ships no AI credentials and never talks to Anthropic. |
 | Errors | Postgres/provider errors are mapped to structured codes (`invalid_argument`, `not_authorized`, `internal`, …) in `supabase_db.ts` / `handler.ts`; raw driver errors and provider details never reach the model or the client. |
+| Cross-app scope (shared Supabase project) | This project also hosts Keep Track ("Katie"). All Foodie tables/RPCs live in a dedicated `foodie` Postgres schema; both Supabase clients in `foodie-agent/index.ts` are constructed with `db: { schema: "foodie" }`, so every call defaults there — reaching a Keep Track table would require a conspicuous, deliberate override that doesn't exist anywhere in this codebase. The service-role client's use stays limited to JWT verification and writing `foodie.agent_actions`; it never queries or mutates anything outside Foodie's own schema. See `DATABASE.md` §0. |
 
 ## Provider boundary
 

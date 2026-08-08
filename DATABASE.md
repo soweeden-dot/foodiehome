@@ -1,9 +1,41 @@
-# FoodieHome — Database Design (Streams 1–2)
+# FoodieHome — Database Design (Streams 1–3 + schema isolation)
 
-**Status:** Stream 1 core schema + Stream 2 membership/provenance.
-**Migrations:** `supabase/migrations/` (12 files, applied in filename order). Schema changes happen **only** through new migration files — never by editing applied migrations, never through the Supabase dashboard.
+**Status:** Stream 1 core schema + Stream 2 membership/provenance + Stream 3 Foodie core, rewritten into a dedicated `foodie` Postgres schema ahead of shared-project deployment.
+**Migrations:** `supabase/migrations/` (13 files, applied in filename order). Schema changes happen **only** through new migration files — never by editing applied migrations, never through the Supabase dashboard. **Nothing has been applied to a real project yet** — these migrations were rewritten in place (not versioned as a new migration) precisely because nothing live exists to preserve.
 
-All 32 tables were validated against a real Postgres 16 instance (migrations apply cleanly; RLS member/outsider behavior, membership RPCs, and audit triggers are exercised by the test suite — see `supabase/tests/`).
+All 33 tables were validated against a real Postgres 16 instance (migrations apply cleanly; RLS member/outsider behavior, membership RPCs, audit triggers, and — critically — coexistence with a simulated pre-existing app in `public` are all exercised by the test suite — see `supabase/tests/` and §0 below).
+
+---
+
+## 0. Schema isolation (shared Supabase project)
+
+FoodieHome shares its Supabase project ("Personal") with **Keep Track** ("Katie"), an existing, live application that owns the project's default `public` schema and must never be modified by Foodie's migrations. Every Foodie-owned database object — all 33 tables, all 20 enum types, all 14 functions, every index, trigger, and RLS policy — lives in a **dedicated `foodie` Postgres schema**, created by the first migration:
+
+```sql
+create schema if not exists foodie;
+```
+
+**Why a schema, not name-prefixing.** The alternative — prefixing every table/type/function with `foodie_` inside `public` — only guards against names you remember to prefix. A dedicated schema is categorical: nothing in `foodie.*` can ever collide with anything in `public.*`, now or in any future Keep Track migration, regardless of naming. It also matches Supabase's own convention of splitting `auth`, `storage`, `realtime`, and `extensions` into separate schemas for exactly this reason.
+
+**The one deliberate shared-table touchpoint.** `auth.users` is Supabase-managed and necessarily shared. Foodie attaches exactly one trigger to it:
+
+```sql
+create trigger trg_foodie_new_auth_user
+  after insert on auth.users
+  for each row execute function foodie.handle_new_auth_user();
+```
+
+Uniquely named so it cannot collide with, shadow, or be confused with any trigger Keep Track already has on the same table; its function touches only `foodie.profiles`. Postgres fires multiple `AFTER INSERT` triggers on the same table independently (in name order) — this trigger is purely additive and neither depends on nor interferes with whatever else fires on signup. Verified concretely, not just by inspection: `supabase/tests/coexistence_test.sql` simulates a Keep Track-style `public.profiles` table + `public.set_updated_at()` function + its own `auth.users` provisioning trigger, applies all 13 Foodie migrations on top, and asserts the simulated objects are byte-for-byte unchanged, both triggers fire independently on a real signup, and no Foodie table/function exists anywhere under `public`.
+
+**`SECURITY DEFINER` functions** pin `set search_path = foodie, pg_temp` (rather than the original `public`) — pinning search_path on `SECURITY DEFINER` functions is standard Postgres hardening (the caller cannot manipulate which objects an elevated-privilege function resolves), and here it additionally guarantees these functions can never accidentally resolve an unqualified name against a Keep Track object of the same name. One consequence: Foodie's random invite-code generator was rewritten to derive from `gen_random_uuid()` (a core Postgres builtin since PG13, always reachable regardless of search_path) instead of pgcrypto's `gen_random_bytes()`, whose installed schema can't be assumed once `public`/`extensions` are no longer in the search path.
+
+**Client access.** PostgREST only serves schemas explicitly added to the project's **Exposed Schemas** setting (Project Settings → API) — `foodie` must be added there before the app can reach any Foodie table (manual, one-time, dashboard-only step; see completion report). Both the Flutter client (`Supabase.initialize(..., postgrestOptions: PostgrestClientOptions(schema: 'foodie'))`) and the Edge Function's two Supabase clients (`createClient(..., { db: { schema: "foodie" } })`) default every `.from()`/`.rpc()` call to `foodie` — set once at client construction, not scattered per call, so no code anywhere needs to remember to qualify a query, and reaching a `public` table would require a conspicuous, deliberate override that does not exist anywhere in this codebase.
+
+**What schema separation does *not* cover.** The Edge Function's `service_role` key is project-wide — Postgres's RLS bypass for `service_role` is not schema-scoped, so a bug in Foodie's server code could theoretically still reach `public` tables via an explicit override. This is a residual shared-project trust cost, not something schema isolation eliminates; it's addressed by discipline instead (§7 "Security model" and `docs/DECISIONS.md`): `service_role` use is kept to the minimum — verifying a caller's JWT and writing `foodie.agent_actions` — and every ordinary household read/write goes through the user's own JWT + RLS instead. No custom Postgres role system was introduced to further restrict this; that's judged unnecessary complexity for now and can be revisited if the shared-project trust boundary ever becomes a real concern.
+
+**Storage (forward-looking, nothing created yet).** Foodie has no storage buckets today. When one is created, its name will be prefixed (`foodie-photos`, not `photos`), and its RLS policies on the shared `storage.objects` table will be uniquely named and filtered by `bucket_id = 'foodie-photos'`, so they cannot affect any Keep Track bucket or policy.
+
+**Realtime (forward-looking, not enabled).** Supabase's default Realtime publication only includes `public` tables. If Foodie ever uses Realtime, `foodie.*` tables would need to be explicitly added to the publication — noted here so it isn't forgotten when that stream arrives.
 
 ---
 
@@ -219,7 +251,7 @@ Explicitly out of Stream 1 scope (schema exists, code does not): the scheduler/w
 
 ## 7. Row Level Security
 
-**One pattern everywhere:** `is_household_member(household_id)` — a `SECURITY DEFINER` SQL function checking `household_members` for `auth.uid()` (definer so policies on `household_members` itself don't recurse). Every one of the 32 tables has RLS enabled; standard domain tables get a single `FOR ALL USING/WITH CHECK` member policy.
+**One pattern everywhere:** `foodie.is_household_member(household_id)` — a `SECURITY DEFINER` SQL function checking `foodie.household_members` for `auth.uid()` (definer so policies on `household_members` itself don't recurse). Every one of the 33 tables has RLS enabled; standard domain tables get a single `FOR ALL USING/WITH CHECK` member policy. RLS itself needed no change for the schema move — policies are per-table objects and travel with their table; only the schema qualifier changed.
 
 Exceptions to the standard policy:
 
@@ -243,6 +275,7 @@ Exceptions to the standard policy:
 4. **Supabase's default grants** (`authenticated` gets table privileges; RLS restricts rows) are assumed; the local validation harness replicates this.
    4a. **Invite codes are the join secret.** Anyone with a valid code and an account can join the household as `member`. Acceptable for a two-person household because codes are shared out-of-band, rotatable by admins (`regenerate_invite_code`), and every join is visible in the roster. Expiring codes can be added later without schema changes beyond a column.
 5. Cross-table integrity of denormalized `household_id` (e.g., a step's `household_id` matching its recipe's) is the app layer's job in Stream 1; hardening triggers can be added later without breaking anything. RLS is not weakened by this: writing a mismatched row requires membership in the *claimed* household, which the attacker doesn't have, and reads scope by the row's own `household_id`.
+6. **Schema isolation is a naming/collision boundary, not an RLS boundary.** RLS already fully scoped every table to household membership before the `foodie` schema existed; moving to a dedicated schema adds protection against a *different* risk (accidental cross-app collisions with Keep Track), and changes nothing about how RLS itself decides access. See §0.
 
 ## 8. Sync-relevant schema features (engine arrives later in Stream 1's app side / Stream 19 verification)
 
@@ -254,10 +287,18 @@ Exceptions to the standard policy:
 
 ## 9. Validation
 
-`supabase/tests/` contains the local validation harness used for Stream 1 (no Docker needed):
+`supabase/tests/` contains the local validation harness (no Docker needed). `run_local.sh` spins one throwaway Postgres cluster and runs two independent databases:
 
+**`foodie_test`** — Foodie's own functional correctness, unrelated to the shared-project question:
 - `auth_stub.sql` — minimal `auth` schema mimic (users table + `auth.uid()` reading the request GUC) so migrations run on vanilla Postgres.
-- `smoke_test.sql` — applies after the migrations and asserts: profile auto-creation, creator-becomes-admin, member read/write access, outsider denial (households/inventory/audit all empty for non-members), append-only enforcement on `record_history`, audit diff correctness, scheduled-reminder CHECK constraint, and notification dedupe uniqueness.
-- `run_local.sh` — spins a throwaway cluster, runs stub → migrations → smoke test.
+- `smoke_test.sql` — profile auto-creation, creator-becomes-admin, member read/write access, outsider denial (households/inventory/audit all empty for non-members), append-only enforcement on `record_history`, audit diff correctness, scheduled-reminder CHECK constraint, notification dedupe uniqueness, and every `foodie` table has RLS enabled.
+- `membership_test.sql` — invite redemption/rotation, leave, last-admin protection, provenance on direct vs. RPC-driven edits.
+- `foodie_test.sql` — memory RPCs, grocery RPC, household-scope rejection, conversation/memory separation, agent-audit append-only enforcement.
 
-Against the real Supabase project, the same migrations apply via `supabase db push` / `supabase migration up`; the stub is never deployed.
+**`foodie_coexistence_test`** — proves the schema-isolation guarantee concretely, not just by inspection:
+- `keep_track_stub.sql` — simulates Keep Track's pre-existing `public` footprint (a `profiles` table, a `set_updated_at()` function, and an `auth.users` provisioning trigger — the two collision candidates identified during design, plus the standard shared-table pattern), applied **before** any Foodie migration.
+- `coexistence_test.sql` — applied after all 13 Foodie migrations; asserts Keep Track's simulated table/function are byte-for-byte unchanged (including the function *body*, not just its existence — `CREATE OR REPLACE FUNCTION` overwrites silently with no error, so existence alone wouldn't catch that failure mode), both `auth.users` triggers fire independently on a real signup, no Foodie table or function exists anywhere under `public`, and all 33 expected tables exist in `foodie`.
+
+Kept in separate databases because `coexistence_test.sql`'s extra signup would otherwise throw off the exact user/profile counts the functional tests assert.
+
+Against the real Supabase project, the same migrations apply via `supabase db push` / `supabase migration up`; neither stub is ever deployed.

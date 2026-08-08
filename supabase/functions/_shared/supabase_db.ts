@@ -7,6 +7,15 @@
 //  - adminClient: service role, used ONLY to write agent_actions (clients
 //    have no insert policy there, so the audit trail cannot be forged).
 //
+// SCHEMA: this project is shared with Keep Track ("Katie"), which owns the
+// default `public` schema; all Foodie tables/RPCs live in `foodie`. Both
+// clients are constructed with `db: { schema: "foodie" }` in
+// foodie-agent/index.ts, so every .from()/.rpc() call below is already
+// scoped there — no per-call schema qualification needed here, and no code
+// in this file can reach a `public` (Keep Track) table without a deliberate,
+// conspicuous .schema('public') override, which does not exist anywhere in
+// this codebase.
+//
 // Postgres errors are mapped to structured FoodieError codes here; raw
 // database errors never leave this module.
 
@@ -22,6 +31,16 @@ import {
   type MemoryCategory,
   type MemoryView,
 } from "./types.ts";
+
+// supabase-js's SupabaseClient type is generic over the active schema
+// (5th type param). Both clients passed in here are constructed with
+// `db: { schema: "foodie" }` in foodie-agent/index.ts — that's the whole
+// point (see the header comment) — so the bare `SupabaseClient` type
+// (implicitly `"public"`) would reject them at compile time. Widened here
+// rather than threaded through as a generic, since this module doesn't
+// otherwise care about the schema type parameter.
+// deno-lint-ignore no-explicit-any
+type AnySupabaseClient = SupabaseClient<any, any, any, any, any>;
 
 interface PgError {
   code?: string;
@@ -42,8 +61,8 @@ function mapDbError(error: PgError, fallback: string): FoodieError {
 
 export class SupabaseFoodieDb implements FoodieDb {
   constructor(
-    private readonly userClient: SupabaseClient,
-    private readonly adminClient: SupabaseClient,
+    private readonly userClient: AnySupabaseClient,
+    private readonly adminClient: AnySupabaseClient,
     private readonly userId: string,
   ) {}
 

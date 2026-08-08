@@ -7,9 +7,9 @@
 
 -- Simulate Supabase's "authenticated" role grants: full table access, RLS
 -- enforced. (The role itself is created in auth_stub.sql, before migrations.)
-grant usage on schema public, auth to authenticated;
-grant all on all tables in schema public to authenticated;
-grant all on all sequences in schema public to authenticated;
+grant usage on schema foodie, auth to authenticated;
+grant all on all tables in schema foodie to authenticated;
+grant all on all sequences in schema foodie to authenticated;
 
 insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-00000000000a', 'alice@example.com'),
@@ -17,7 +17,7 @@ insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-00000000000c', 'carol@example.com');
 
 do $$ begin
-  if (select count(*) from public.profiles) <> 3 then
+  if (select count(*) from foodie.profiles) <> 3 then
     raise exception 'profiles were not auto-created';
   end if;
 end $$;
@@ -26,11 +26,11 @@ end $$;
 set role authenticated;
 set request.jwt.claim.sub = '00000000-0000-0000-0000-00000000000a';
 
-insert into public.households (id, name, created_by)
+insert into foodie.households (id, name, created_by)
   values ('10000000-0000-0000-0000-000000000001', 'Home', '00000000-0000-0000-0000-00000000000a');
 
 do $$ begin
-  if not exists (select 1 from public.household_members
+  if not exists (select 1 from foodie.household_members
                  where household_id = '10000000-0000-0000-0000-000000000001'
                    and user_id = '00000000-0000-0000-0000-00000000000a'
                    and role = 'admin') then
@@ -39,22 +39,22 @@ do $$ begin
 end $$;
 
 -- Admin adds Bob; Alice writes domain data.
-insert into public.household_members (household_id, user_id, role)
+insert into foodie.household_members (household_id, user_id, role)
   values ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-00000000000b', 'member');
-insert into public.food_items (id, household_id, name)
+insert into foodie.food_items (id, household_id, name)
   values ('20000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'Yellow onion');
-insert into public.inventory_items (household_id, food_item_id, quantity, unit)
+insert into foodie.inventory_items (household_id, food_item_id, quantity, unit)
   values ('10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', 3, 'piece');
-update public.food_items set category = 'produce'
+update foodie.food_items set category = 'produce'
   where id = '20000000-0000-0000-0000-000000000001';
 
 -- Bob (member) sees household data and audit history…
 set request.jwt.claim.sub = '00000000-0000-0000-0000-00000000000b';
 do $$ begin
-  if (select count(*) from public.inventory_items) <> 1 then
+  if (select count(*) from foodie.inventory_items) <> 1 then
     raise exception 'member cannot read household inventory';
   end if;
-  if (select count(*) from public.record_history) < 3 then
+  if (select count(*) from foodie.record_history) < 3 then
     raise exception 'audit rows missing for member';
   end if;
 end $$;
@@ -62,7 +62,7 @@ end $$;
 -- …but cannot write the audit log.
 do $$ begin
   begin
-    insert into public.record_history (household_id, table_name, record_id, op, diff)
+    insert into foodie.record_history (household_id, table_name, record_id, op, diff)
       values ('10000000-0000-0000-0000-000000000001', 'x', gen_random_uuid(), 'INSERT', '{}');
     raise exception 'member was able to write record_history';
   exception when insufficient_privilege then null;
@@ -72,13 +72,13 @@ end $$;
 -- Carol (outsider) sees nothing and cannot write.
 set request.jwt.claim.sub = '00000000-0000-0000-0000-00000000000c';
 do $$ begin
-  if (select count(*) from public.households) <> 0
-     or (select count(*) from public.inventory_items) <> 0
-     or (select count(*) from public.record_history) <> 0 then
+  if (select count(*) from foodie.households) <> 0
+     or (select count(*) from foodie.inventory_items) <> 0
+     or (select count(*) from foodie.record_history) <> 0 then
     raise exception 'outsider can see household data';
   end if;
   begin
-    insert into public.food_items (household_id, name)
+    insert into foodie.food_items (household_id, name)
       values ('10000000-0000-0000-0000-000000000001', 'intruder item');
     raise exception 'outsider was able to insert food_items';
   exception when insufficient_privilege or check_violation then null;
@@ -89,7 +89,7 @@ end $$;
 set request.jwt.claim.sub = '00000000-0000-0000-0000-00000000000a';
 do $$ begin
   if (select diff -> 'changed' -> 'category' ->> 'new'
-        from public.record_history
+        from foodie.record_history
        where table_name = 'food_items' and op = 'UPDATE'
        order by id desc limit 1) is distinct from 'produce' then
     raise exception 'audit UPDATE diff did not capture the change';
@@ -99,7 +99,7 @@ end $$;
 -- Scheduled reminder without a recurrence rule must be rejected.
 do $$ begin
   begin
-    insert into public.reminder_rules (household_id, name, category, kind)
+    insert into foodie.reminder_rules (household_id, name, category, kind)
       values ('10000000-0000-0000-0000-000000000001', 'bad rule', 'cleaning', 'scheduled');
     raise exception 'scheduled reminder without recurrence was accepted';
   exception when check_violation then null;
@@ -107,33 +107,34 @@ do $$ begin
 end $$;
 
 -- Valid scheduled + event rules.
-insert into public.recurrence_rules (id, household_id, interval_unit, interval_count, weekday, time_of_day)
+insert into foodie.recurrence_rules (id, household_id, interval_unit, interval_count, weekday, time_of_day)
   values ('30000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'week', 1, 0, '08:00');
-insert into public.reminder_rules (household_id, name, category, kind, recurrence_rule_id)
+insert into foodie.reminder_rules (household_id, name, category, kind, recurrence_rule_id)
   values ('10000000-0000-0000-0000-000000000001', 'Sunday morning brief', 'morning_brief', 'scheduled',
           '30000000-0000-0000-0000-000000000001');
-insert into public.reminder_rules (household_id, name, category, kind, event_type, config)
+insert into foodie.reminder_rules (household_id, name, category, kind, event_type, config)
   values ('10000000-0000-0000-0000-000000000001', 'Filter due', 'maintenance', 'event',
           'component_replacement_due', '{"days_before_due": 7}');
 
 -- Notification dedupe (service-role context: reset role).
 reset role;
-insert into public.notifications (household_id, category, title, body, dedupe_key)
+insert into foodie.notifications (household_id, category, title, body, dedupe_key)
   values ('10000000-0000-0000-0000-000000000001', 'morning_brief', 'Brief', '...', 'morning_brief:2026-08-09');
 do $$ begin
   begin
-    insert into public.notifications (household_id, category, title, body, dedupe_key)
+    insert into foodie.notifications (household_id, category, title, body, dedupe_key)
       values ('10000000-0000-0000-0000-000000000001', 'morning_brief', 'Brief', '...', 'morning_brief:2026-08-09');
     raise exception 'duplicate dedupe_key was accepted';
   exception when unique_violation then null;
   end;
 end $$;
 
--- Every public table must have RLS enabled.
+-- Every foodie-schema table must have RLS enabled (this checks Foodie's own
+-- migrations only; Keep Track's public schema is out of scope here).
 do $$ begin
-  if exists (select 1 from pg_tables where schemaname = 'public' and not rowsecurity) then
+  if exists (select 1 from pg_tables where schemaname = 'foodie' and not rowsecurity) then
     raise exception 'table(s) without RLS: %',
-      (select string_agg(tablename, ', ') from pg_tables where schemaname = 'public' and not rowsecurity);
+      (select string_agg(tablename, ', ') from pg_tables where schemaname = 'foodie' and not rowsecurity);
   end if;
 end $$;
 

@@ -343,13 +343,14 @@ Voice is a **thin input/output layer over the same agent + tool architecture** �
 - `profiles`: users read household co-members, write self. `households`/`household_members`: members read; admin writes; invite-code redemption via a `SECURITY DEFINER` function (the one place someone writes before being a member).
 - Append-only tables (`agent_actions`, `record_history`, logs, completions): INSERT + SELECT for members; no UPDATE/DELETE policies — immutability enforced by the database.
 - Edge Functions use the caller's JWT (RLS applies) by default; the `service_role` key is used only inside functions for the narrow steps that need it (e.g., audit writes), never shipped anywhere.
+- **Schema isolation is orthogonal to RLS, not a substitute for it.** Every table was already fully RLS-scoped to household membership before Foodie's tables moved into a dedicated `foodie` schema (§29); the schema boundary protects against a different risk — accidental naming collisions with Keep Track, the other app in this shared Supabase project — and changes nothing about how access is actually decided.
 
 ## 20. Secrets Strategy
 
 - **AI API keys exist only as Supabase Edge Function secrets.** Never in the repo, never in the Flutter bundle, never in Postgres.
 - Flutter ships only the Supabase URL + anon key (designed to be public; RLS is the security boundary).
 - Repo hygiene: `.env` files git-ignored; `--dart-define` for build-time config; no secrets in migration files or seed data.
-- Supabase service-role key: CI/local-tooling only, never in the app.
+- Supabase service-role key: CI/local-tooling only, never in the app. In the shared "Personal" project (§29), the Edge Function's service-role client is additionally schema-scoped to `foodie` by default at construction — an accidental unqualified call resolves inside Foodie's own schema, not Keep Track's, without relying on remembering to qualify it.
 
 ## 21. Backup / Data Loss
 
@@ -490,13 +491,27 @@ The reminder worker (scheduler + channel adapters + Twilio) is **Stream 15** —
 
 ## 28. Multi-agent ecosystem (recorded at Stream 2; not implemented)
 
-Foodie is one of three separate personal agents: **Atlas** (school/academic), **Foodie** (household/food, this project), **Katie** (Keep Track: routines, workouts, calendar, personal planning). They remain **separate applications with separate databases**; a scoped interoperability layer connects them later. FoodieHome must not be redesigned around a shared database.
+Foodie is one of three separate personal agents: **Atlas** (school/academic), **Foodie** (household/food, this project), **Katie** (Keep Track: routines, workouts, calendar, personal planning). They remain **separate applications**; a scoped interoperability layer connects them later. FoodieHome must not be redesigned around a shared database.
+
+**Correction (recorded when Foodie and Keep Track were put on the same Supabase project — see §29):** Foodie and Keep Track do, as of this decision, share one physical Supabase project/Postgres instance — a practical constraint (two free-tier projects, not an architectural choice). They remain logically separate via a dedicated `foodie` schema with no cross-app database access; this is schema-level isolation within shared infrastructure, not the shared-database *design* this section originally ruled out. Nothing about Foodie's data model, RLS, or agent architecture changed to accommodate this — see §29 for the full isolation strategy.
 
 What this architecture guarantees now:
 
 - **Provenance:** the `action_source` vocabulary (`user | foodie | atlas | katie | system`) is used across `record_history`, `agent_actions`, and `fermentation_logs` (migration 12), so cross-agent actions are attributable the day interop arrives.
 - **Unified Morning Brief (future):** one combined morning SMS assembled by a coordinator from *structured briefing contributions* (source_agent, type, priority, start/end time, summary, metadata) — never direct cross-agent database access. Compatibility points already in place: the channel-neutral notification pipeline (`notifications` → `notification_deliveries`) can carry a brief regardless of who assembled it; nothing assumes Foodie is the only producer of a notification; delivery preferences are per category, not per agent. The coordinator itself is deliberately unbuilt and unscheduled.
 
+## 29. Shared Supabase project / schema isolation
+
+FoodieHome runs in the same Supabase project ("Personal") as Keep Track ("Katie"), because only two free-tier projects are available. Keep Track is live and must never be modified by Foodie's work. The isolation strategy — designed and rewritten into the migrations before anything was ever deployed — is documented in full in `DATABASE.md` §0; summarized here for the architecture record:
+
+- **Dedicated schema, not name-prefixing.** All 33 Foodie tables, 20 enum types, and 14 functions live in a `foodie` Postgres schema (`create schema if not exists foodie;`), never in the shared `public` schema Keep Track owns. A schema boundary is categorical — it rules out collisions with any current *or future* Keep Track object, regardless of naming — where prefixing individual names only guards against today's known names.
+- **One deliberate shared-table touchpoint.** `auth.users` is Supabase-managed and necessarily shared. Foodie's only object there is a uniquely-named trigger (`trg_foodie_new_auth_user`) that provisions `foodie.profiles` and nothing else; multiple independent apps' triggers coexist on `auth.users` without conflict as long as names differ, which is verified concretely (not just asserted) by a test that simulates Keep Track's own signup-provisioning trigger alongside Foodie's and confirms both fire independently.
+- **`SECURITY DEFINER` functions pin `search_path = foodie, pg_temp`** — standard Postgres hardening for elevated-privilege functions, which here also prevents any accidental resolution of a same-named Keep Track object.
+- **Client access is schema-scoped by default**, not per-call: the Flutter client and both of the Edge Function's Supabase clients are constructed once with `foodie` as their default schema, so nothing in the codebase needs to remember to qualify a query, and reaching a Keep Track table would require a conspicuous, deliberate override that does not exist anywhere in the code.
+- **Residual shared-project risk, accepted rather than engineered away:** the Edge Function's `service_role` key is project-wide and Postgres's RLS bypass for `service_role` is not schema-scoped, so schema isolation does not stop a *bug* in Foodie's server code from reaching `public` — only naming *collisions*. This is addressed by keeping `service_role` use minimal (JWT verification + writing `foodie.agent_actions` only) rather than by introducing a custom Postgres role system, which was judged unnecessary complexity for a two-person private app. Revisit only if this trust boundary becomes a real concern.
+- **Storage and Realtime, forward-looking:** no buckets exist yet; future ones will be prefixed (`foodie-photos`). Realtime is not enabled; if it is later, `foodie.*` tables need explicit addition to the publication, since Supabase's default publication only covers `public`.
+- **One manual, one-time dashboard step is required before deployment:** adding `foodie` to the project's Exposed Schemas (Project Settings → API) — PostgREST serves nothing outside that list, so the Flutter client and Edge Functions cannot reach Foodie's tables until this is done.
+
 ---
 
-*End of architecture document. Streams delivered so far: 1 (schema — `DATABASE.md`, `supabase/migrations/`), 2 (auth/membership — migration 12, `app/`), 3 (Foodie core — `docs/FOODIE.md`, `supabase/functions/`, migration 13), 4 (app shell/navigation/Kitchen Device Mode — §4 above, `app/lib/core/{router,shell_layout,kitchen_mode}.dart`, `app/lib/features/shell/`). The agent architecture of §12–§15 is now implemented as described; `docs/FOODIE.md` is its authoritative reference. Decision log: `docs/DECISIONS.md`.*
+*End of architecture document. Streams delivered so far: 1 (schema — `DATABASE.md`, `supabase/migrations/`), 2 (auth/membership — migration 12, `app/`), 3 (Foodie core — `docs/FOODIE.md`, `supabase/functions/`, migration 13), 4 (app shell/navigation/Kitchen Device Mode — §4 above, `app/lib/core/{router,shell_layout,kitchen_mode}.dart`, `app/lib/features/shell/`). Between Streams 3 and 4, all Foodie-owned database objects were rewritten into a dedicated `foodie` schema (§29) to coexist safely with Keep Track in the same shared Supabase project — pre-deployment, so the migrations themselves were edited in place rather than versioned as a new migration. The agent architecture of §12–§15 is now implemented as described; `docs/FOODIE.md` is its authoritative reference. Decision log: `docs/DECISIONS.md`.*

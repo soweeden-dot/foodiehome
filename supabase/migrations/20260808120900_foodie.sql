@@ -5,14 +5,14 @@
 -- invocation, enough recorded input/output to explain and (where feasible)
 -- revert the change. Data-level auditing is record_history (next migration).
 
-create type public.agent_message_role as enum ('user', 'assistant', 'system', 'tool');
+create type foodie.agent_message_role as enum ('user', 'assistant', 'system', 'tool');
 
-create type public.agent_action_status as enum ('proposed', 'executed', 'failed', 'reverted');
+create type foodie.agent_action_status as enum ('proposed', 'executed', 'failed', 'reverted');
 
-create table public.agent_conversations (
+create table foodie.agent_conversations (
   id            uuid primary key default gen_random_uuid(),
-  household_id  uuid not null references public.households (id) on delete cascade,
-  created_by    uuid references public.profiles (id) on delete set null,
+  household_id  uuid not null references foodie.households (id) on delete cascade,
+  created_by    uuid references foodie.profiles (id) on delete set null,
   title         text,
   -- Where/why the conversation happened: 'chat', 'cooking', 'voice', 'scan'...
   context_tag   text not null default 'chat',
@@ -22,13 +22,13 @@ create table public.agent_conversations (
 );
 
 create index idx_agent_conversations_household
-  on public.agent_conversations (household_id, updated_at desc);
+  on foodie.agent_conversations (household_id, updated_at desc);
 
-create table public.agent_messages (
+create table foodie.agent_messages (
   id              uuid primary key default gen_random_uuid(),
-  household_id    uuid not null references public.households (id) on delete cascade,
-  conversation_id uuid not null references public.agent_conversations (id) on delete cascade,
-  role            public.agent_message_role not null,
+  household_id    uuid not null references foodie.households (id) on delete cascade,
+  conversation_id uuid not null references foodie.agent_conversations (id) on delete cascade,
+  role            foodie.agent_message_role not null,
   content         text not null default '',
   -- Tool-use blocks / structured content when role warrants it.
   payload         jsonb,
@@ -37,16 +37,16 @@ create table public.agent_messages (
 );
 
 create index idx_agent_messages_conversation
-  on public.agent_messages (conversation_id, created_at);
+  on foodie.agent_messages (conversation_id, created_at);
 
-create table public.agent_actions (
+create table foodie.agent_actions (
   id              uuid primary key default gen_random_uuid(),
-  household_id    uuid not null references public.households (id) on delete cascade,
-  conversation_id uuid references public.agent_conversations (id) on delete set null,
-  message_id      uuid references public.agent_messages (id) on delete set null,
+  household_id    uuid not null references foodie.households (id) on delete cascade,
+  conversation_id uuid references foodie.agent_conversations (id) on delete set null,
+  message_id      uuid references foodie.agent_messages (id) on delete set null,
   tool_name       text not null,
   input           jsonb not null default '{}',
-  status          public.agent_action_status not null default 'proposed',
+  status          foodie.agent_action_status not null default 'proposed',
   result_summary  text,
   -- Records touched: [{"table": "meal_plan_entries", "id": "..."}, ...]
   affected_records jsonb,
@@ -59,13 +59,13 @@ create table public.agent_actions (
 );
 
 create index idx_agent_actions_household
-  on public.agent_actions (household_id, created_at desc);
+  on foodie.agent_actions (household_id, created_at desc);
 create index idx_agent_actions_conversation
-  on public.agent_actions (conversation_id);
+  on foodie.agent_actions (conversation_id);
 
-create trigger trg_agent_conversations_updated_at before update on public.agent_conversations for each row execute function public.set_updated_at();
-create trigger trg_agent_messages_updated_at      before update on public.agent_messages      for each row execute function public.set_updated_at();
-create trigger trg_agent_actions_updated_at       before update on public.agent_actions       for each row execute function public.set_updated_at();
+create trigger trg_agent_conversations_updated_at before update on foodie.agent_conversations for each row execute function foodie.set_updated_at();
+create trigger trg_agent_messages_updated_at      before update on foodie.agent_messages      for each row execute function foodie.set_updated_at();
+create trigger trg_agent_actions_updated_at       before update on foodie.agent_actions       for each row execute function foodie.set_updated_at();
 
 -- ---------------------------------------------------------------------------
 -- Row Level Security. Conversations/messages: normal member access (insert +
@@ -74,22 +74,22 @@ create trigger trg_agent_actions_updated_at       before update on public.agent_
 -- READ their audit trail but never write it — rows are created and updated
 -- exclusively by the Edge Function tool executor via the service role.
 -- ---------------------------------------------------------------------------
-alter table public.agent_conversations enable row level security;
-alter table public.agent_messages      enable row level security;
-alter table public.agent_actions       enable row level security;
+alter table foodie.agent_conversations enable row level security;
+alter table foodie.agent_messages      enable row level security;
+alter table foodie.agent_actions       enable row level security;
 
-create policy agent_conversations_member_select on public.agent_conversations
-  for select using (public.is_household_member(household_id));
-create policy agent_conversations_member_insert on public.agent_conversations
-  for insert with check (public.is_household_member(household_id));
-create policy agent_conversations_member_update on public.agent_conversations
-  for update using (public.is_household_member(household_id))
-  with check (public.is_household_member(household_id));
+create policy agent_conversations_member_select on foodie.agent_conversations
+  for select using (foodie.is_household_member(household_id));
+create policy agent_conversations_member_insert on foodie.agent_conversations
+  for insert with check (foodie.is_household_member(household_id));
+create policy agent_conversations_member_update on foodie.agent_conversations
+  for update using (foodie.is_household_member(household_id))
+  with check (foodie.is_household_member(household_id));
 
-create policy agent_messages_member_select on public.agent_messages
-  for select using (public.is_household_member(household_id));
-create policy agent_messages_member_insert on public.agent_messages
-  for insert with check (public.is_household_member(household_id));
+create policy agent_messages_member_select on foodie.agent_messages
+  for select using (foodie.is_household_member(household_id));
+create policy agent_messages_member_insert on foodie.agent_messages
+  for insert with check (foodie.is_household_member(household_id));
 
-create policy agent_actions_member_select on public.agent_actions
-  for select using (public.is_household_member(household_id));
+create policy agent_actions_member_select on foodie.agent_actions
+  for select using (foodie.is_household_member(household_id));

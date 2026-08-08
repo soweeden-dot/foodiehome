@@ -16,6 +16,12 @@ Future<void> main() async {
   await Supabase.initialize(
     url: Env.supabaseUrl,
     publishableKey: Env.supabaseKey,
+    // This project is shared with Keep Track ("Katie"), which owns the
+    // default `public` schema. Every Foodie table/RPC lives in the
+    // dedicated `foodie` schema, so all .from()/.rpc() calls made through
+    // this client are scoped there by default. Auth, Storage, and Realtime
+    // are separate APIs and are unaffected by this setting.
+    postgrestOptions: const PostgrestClientOptions(schema: 'foodie'),
   );
 
   runApp(const ProviderScope(child: FoodieHomeApp()));

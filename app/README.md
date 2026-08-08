@@ -6,8 +6,14 @@ Flutter client for the FoodieHome household system. Architecture:
 ## Running
 
 Requires a Supabase project with the migrations from `../supabase/migrations`
-applied and the `foodie-agent` Edge Function deployed. Configuration is
-injected at build time:
+applied and the `foodie-agent` Edge Function deployed. All Foodie tables live
+in a dedicated `foodie` schema (this project is shared with Keep Track,
+which owns `public` — see `../DATABASE.md` §0), so **`foodie` must be added
+to the project's Exposed Schemas** (Project Settings → API in the Supabase
+dashboard) before the app can reach any Foodie data — PostgREST serves
+nothing outside that list. This client already defaults every query to
+`foodie` (`postgrestOptions` in `main.dart`); no per-call schema handling is
+needed elsewhere. Configuration is injected at build time:
 
 ```
 flutter run \

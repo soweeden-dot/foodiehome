@@ -8,7 +8,7 @@
 -- Intent-level auditing ("Foodie removed Friday dinner because you said...")
 -- is agent_actions; this table answers "why does the data look like this".
 
-create table public.record_history (
+create table foodie.record_history (
   id            bigint generated always as identity primary key,
   household_id  uuid,                            -- null only for non-household tables
   table_name    text not null,
@@ -22,15 +22,15 @@ create table public.record_history (
 );
 
 create index idx_record_history_record
-  on public.record_history (table_name, record_id, created_at desc);
+  on foodie.record_history (table_name, record_id, created_at desc);
 create index idx_record_history_household
-  on public.record_history (household_id, created_at desc);
+  on foodie.record_history (household_id, created_at desc);
 
-create or replace function public.log_record_history()
+create or replace function foodie.log_record_history()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
+set search_path = foodie, pg_temp
 as $$
 declare
   hh      uuid;
@@ -62,7 +62,7 @@ begin
     d      := jsonb_build_object('old', to_jsonb(old));
   end if;
 
-  insert into public.record_history (household_id, table_name, record_id, op, changed_by, diff)
+  insert into foodie.record_history (household_id, table_name, record_id, op, changed_by, diff)
   values (hh, tg_table_name, rec_id, tg_op, auth.uid(), d);
 
   return coalesce(new, old);
@@ -72,28 +72,28 @@ $$;
 -- Attach to the significant mutable domain tables. Deliberately NOT attached
 -- to: append-only tables (their inserts are their own history), agent
 -- message/notification traffic (volume without value), devices/profiles.
-create trigger trg_audit_inventory_locations   after insert or update or delete on public.inventory_locations   for each row execute function public.log_record_history();
-create trigger trg_audit_food_items            after insert or update or delete on public.food_items            for each row execute function public.log_record_history();
-create trigger trg_audit_inventory_items       after insert or update or delete on public.inventory_items       for each row execute function public.log_record_history();
-create trigger trg_audit_recipes               after insert or update or delete on public.recipes               for each row execute function public.log_record_history();
-create trigger trg_audit_recipe_steps          after insert or update or delete on public.recipe_steps          for each row execute function public.log_record_history();
-create trigger trg_audit_recipe_ingredients    after insert or update or delete on public.recipe_ingredients    for each row execute function public.log_record_history();
-create trigger trg_audit_meal_plans            after insert or update or delete on public.meal_plans            for each row execute function public.log_record_history();
-create trigger trg_audit_meal_plan_entries     after insert or update or delete on public.meal_plan_entries     for each row execute function public.log_record_history();
-create trigger trg_audit_grocery_lists         after insert or update or delete on public.grocery_lists         for each row execute function public.log_record_history();
-create trigger trg_audit_grocery_items         after insert or update or delete on public.grocery_items         for each row execute function public.log_record_history();
-create trigger trg_audit_cleaning_tasks        after insert or update or delete on public.cleaning_tasks        for each row execute function public.log_record_history();
-create trigger trg_audit_tracked_components    after insert or update or delete on public.tracked_components    for each row execute function public.log_record_history();
-create trigger trg_audit_household_supplies    after insert or update or delete on public.household_supplies    for each row execute function public.log_record_history();
-create trigger trg_audit_fermentation_projects after insert or update or delete on public.fermentation_projects for each row execute function public.log_record_history();
-create trigger trg_audit_fermentation_logs     after insert or update or delete on public.fermentation_logs     for each row execute function public.log_record_history();
-create trigger trg_audit_recurrence_rules      after insert or update or delete on public.recurrence_rules      for each row execute function public.log_record_history();
-create trigger trg_audit_reminder_rules        after insert or update or delete on public.reminder_rules        for each row execute function public.log_record_history();
-create trigger trg_audit_household_preferences after insert or update or delete on public.household_preferences for each row execute function public.log_record_history();
+create trigger trg_audit_inventory_locations   after insert or update or delete on foodie.inventory_locations   for each row execute function foodie.log_record_history();
+create trigger trg_audit_food_items            after insert or update or delete on foodie.food_items            for each row execute function foodie.log_record_history();
+create trigger trg_audit_inventory_items       after insert or update or delete on foodie.inventory_items       for each row execute function foodie.log_record_history();
+create trigger trg_audit_recipes               after insert or update or delete on foodie.recipes               for each row execute function foodie.log_record_history();
+create trigger trg_audit_recipe_steps          after insert or update or delete on foodie.recipe_steps          for each row execute function foodie.log_record_history();
+create trigger trg_audit_recipe_ingredients    after insert or update or delete on foodie.recipe_ingredients    for each row execute function foodie.log_record_history();
+create trigger trg_audit_meal_plans            after insert or update or delete on foodie.meal_plans            for each row execute function foodie.log_record_history();
+create trigger trg_audit_meal_plan_entries     after insert or update or delete on foodie.meal_plan_entries     for each row execute function foodie.log_record_history();
+create trigger trg_audit_grocery_lists         after insert or update or delete on foodie.grocery_lists         for each row execute function foodie.log_record_history();
+create trigger trg_audit_grocery_items         after insert or update or delete on foodie.grocery_items         for each row execute function foodie.log_record_history();
+create trigger trg_audit_cleaning_tasks        after insert or update or delete on foodie.cleaning_tasks        for each row execute function foodie.log_record_history();
+create trigger trg_audit_tracked_components    after insert or update or delete on foodie.tracked_components    for each row execute function foodie.log_record_history();
+create trigger trg_audit_household_supplies    after insert or update or delete on foodie.household_supplies    for each row execute function foodie.log_record_history();
+create trigger trg_audit_fermentation_projects after insert or update or delete on foodie.fermentation_projects for each row execute function foodie.log_record_history();
+create trigger trg_audit_fermentation_logs     after insert or update or delete on foodie.fermentation_logs     for each row execute function foodie.log_record_history();
+create trigger trg_audit_recurrence_rules      after insert or update or delete on foodie.recurrence_rules      for each row execute function foodie.log_record_history();
+create trigger trg_audit_reminder_rules        after insert or update or delete on foodie.reminder_rules        for each row execute function foodie.log_record_history();
+create trigger trg_audit_household_preferences after insert or update or delete on foodie.household_preferences for each row execute function foodie.log_record_history();
 
-alter table public.record_history enable row level security;
+alter table foodie.record_history enable row level security;
 
-create policy record_history_member_select on public.record_history
-  for select using (household_id is not null and public.is_household_member(household_id));
+create policy record_history_member_select on foodie.record_history
+  for select using (household_id is not null and foodie.is_household_member(household_id));
 -- No insert/update/delete policies: append-only, written only by the
 -- SECURITY DEFINER trigger (and service role).

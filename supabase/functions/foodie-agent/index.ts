@@ -19,8 +19,22 @@ const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
 const model = Deno.env.get("FOODIE_MODEL") ?? "claude-sonnet-5";
 
+// This project is shared with Keep Track ("Katie"), which owns the default
+// `public` schema. Both clients below default their PostgREST access to the
+// `foodie` schema — this is not just documentation, it's a structural guard:
+// an accidental .from('some_table') call resolves inside `foodie`, never
+// `public`, without anyone having to remember to qualify it. Reaching a
+// Keep Track table would require a conspicuous, deliberate .schema('public')
+// override that does not exist anywhere in this codebase.
+//
+// service_role note: adminClient is used ONLY for the two Foodie-owned
+// operations that need it — verifying a caller's JWT (auth.getUser, a
+// GoTrue call unaffected by db.schema) and writing foodie.agent_actions
+// (clients have no INSERT policy there). Every ordinary household read/write
+// goes through userClient instead, under the caller's own JWT + RLS.
 const adminClient = createClient(supabaseUrl, serviceRoleKey, {
   auth: { persistSession: false },
+  db: { schema: "foodie" },
 });
 
 async function authenticate(req: Request): Promise<AuthedUser | null> {
@@ -36,6 +50,7 @@ function createDb(user: AuthedUser): SupabaseFoodieDb {
   const userClient = createClient(supabaseUrl, anonKey, {
     global: { headers: { Authorization: `Bearer ${user.token}` } },
     auth: { persistSession: false },
+    db: { schema: "foodie" },
   });
   return new SupabaseFoodieDb(userClient, adminClient, user.userId);
 }

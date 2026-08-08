@@ -9,30 +9,30 @@
 -- 3. Last-admin protection: a household can never lose its final admin
 --    through the client (deletion stays service-role-only).
 
-create type public.action_source as enum ('user', 'foodie', 'atlas', 'katie', 'system');
+create type foodie.action_source as enum ('user', 'foodie', 'atlas', 'katie', 'system');
 
 -- ---------------------------------------------------------------------------
 -- Provenance on the data-level audit log.
 -- ---------------------------------------------------------------------------
-alter table public.record_history
-  add column source public.action_source not null default 'user';
+alter table foodie.record_history
+  add column source foodie.action_source not null default 'user';
 
-create or replace function public.current_action_source()
-returns public.action_source
+create or replace function foodie.current_action_source()
+returns foodie.action_source
 language sql
 stable
 as $$
   select coalesce(
-    nullif(current_setting('app.action_source', true), '')::public.action_source,
+    nullif(current_setting('app.action_source', true), '')::foodie.action_source,
     'user'
   );
 $$;
 
-create or replace function public.log_record_history()
+create or replace function foodie.log_record_history()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
+set search_path = foodie, pg_temp
 as $$
 declare
   hh      uuid;
@@ -63,8 +63,8 @@ begin
     d      := jsonb_build_object('old', to_jsonb(old));
   end if;
 
-  insert into public.record_history (household_id, table_name, record_id, op, changed_by, source, diff)
-  values (hh, tg_table_name, rec_id, tg_op, auth.uid(), public.current_action_source(), d);
+  insert into foodie.record_history (household_id, table_name, record_id, op, changed_by, source, diff)
+  values (hh, tg_table_name, rec_id, tg_op, auth.uid(), foodie.current_action_source(), d);
 
   return coalesce(new, old);
 end;
@@ -72,33 +72,33 @@ $$;
 
 -- Intent-level audit gets the same provenance (Foodie's executor writes
 -- 'foodie'; a future interop layer writes 'atlas'/'katie').
-alter table public.agent_actions
-  add column source public.action_source not null default 'foodie';
+alter table foodie.agent_actions
+  add column source foodie.action_source not null default 'foodie';
 
 -- Fermentation log authorship migrates to the shared vocabulary.
-alter table public.fermentation_logs
+alter table foodie.fermentation_logs
   alter column author drop default,
-  alter column author type public.action_source using author::text::public.action_source,
+  alter column author type foodie.action_source using author::text::foodie.action_source,
   alter column author set default 'user';
 
-drop type public.log_author;
+drop type foodie.log_author;
 
 -- ---------------------------------------------------------------------------
 -- Last-admin protection on household_members.
 -- Blocks deleting or demoting the only admin (RLS already limits who can try;
 -- this guards against the permitted cases: self-leave and admin edits).
 -- ---------------------------------------------------------------------------
-create or replace function public.protect_last_admin()
+create or replace function foodie.protect_last_admin()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
+set search_path = foodie, pg_temp
 as $$
 begin
   if old.role = 'admin'
      and (tg_op = 'DELETE' or new.role <> 'admin')
      and not exists (
-       select 1 from household_members m
+       select 1 from foodie.household_members m
        where m.household_id = old.household_id
          and m.role = 'admin'
          and m.id <> old.id
@@ -112,8 +112,8 @@ end;
 $$;
 
 create trigger trg_protect_last_admin
-  before update or delete on public.household_members
-  for each row execute function public.protect_last_admin();
+  before update or delete on foodie.household_members
+  for each row execute function foodie.protect_last_admin();
 
 -- ---------------------------------------------------------------------------
 -- Membership RPCs (called from the app via supabase.rpc()).
@@ -122,11 +122,11 @@ create trigger trg_protect_last_admin
 -- Join a household by invite code. SECURITY DEFINER: the caller is not yet a
 -- member, so RLS would otherwise hide the household and forbid the insert.
 -- Case-insensitive on the code; idempotent for existing members.
-create or replace function public.redeem_household_invite(code text)
+create or replace function foodie.redeem_household_invite(code text)
 returns uuid
 language plpgsql
 security definer
-set search_path = public
+set search_path = foodie, pg_temp
 as $$
 declare
   hh uuid;
@@ -136,14 +136,14 @@ begin
   end if;
 
   select id into hh
-  from households
+  from foodie.households
   where invite_code = lower(trim(code));
 
   if hh is null then
     raise exception 'invalid invite code' using errcode = 'P0003';
   end if;
 
-  insert into household_members (household_id, user_id, role)
+  insert into foodie.household_members (household_id, user_id, role)
   values (hh, auth.uid(), 'member')
   on conflict (household_id, user_id) do nothing;
 
@@ -152,39 +152,41 @@ end;
 $$;
 
 -- Rotate the invite code (admins only). Returns the new code.
-create or replace function public.regenerate_invite_code(hh uuid)
+create or replace function foodie.regenerate_invite_code(hh uuid)
 returns text
 language plpgsql
 security definer
-set search_path = public
+set search_path = foodie, pg_temp
 as $$
 declare
   new_code text;
 begin
-  if not public.is_household_admin(hh) then
+  if not foodie.is_household_admin(hh) then
     raise exception 'only household admins can regenerate the invite code'
       using errcode = 'P0004';
   end if;
 
-  new_code := encode(gen_random_bytes(6), 'hex');
-  update households set invite_code = new_code where id = hh;
+  -- gen_random_uuid()-derived, not pgcrypto's gen_random_bytes(): see the
+  -- comment on households.invite_code in migration 02 for why.
+  new_code := substr(replace(gen_random_uuid()::text, '-', ''), 1, 12);
+  update foodie.households set invite_code = new_code where id = hh;
   return new_code;
 end;
 $$;
 
 -- Leave a household. Last-admin protection still applies via the trigger.
-create or replace function public.leave_household(hh uuid)
+create or replace function foodie.leave_household(hh uuid)
 returns void
 language plpgsql
 security definer
-set search_path = public
+set search_path = foodie, pg_temp
 as $$
 begin
   if auth.uid() is null then
     raise exception 'not authenticated' using errcode = 'P0002';
   end if;
 
-  delete from household_members
+  delete from foodie.household_members
   where household_id = hh and user_id = auth.uid();
 
   if not found then
@@ -194,12 +196,12 @@ end;
 $$;
 
 -- RPCs are executable by signed-in users only.
-revoke execute on function public.redeem_household_invite(text) from public;
-revoke execute on function public.regenerate_invite_code(uuid) from public;
-revoke execute on function public.leave_household(uuid) from public;
-grant execute on function public.redeem_household_invite(text) to authenticated;
-grant execute on function public.regenerate_invite_code(uuid) to authenticated;
-grant execute on function public.leave_household(uuid) to authenticated;
+revoke execute on function foodie.redeem_household_invite(text) from public;
+revoke execute on function foodie.regenerate_invite_code(uuid) from public;
+revoke execute on function foodie.leave_household(uuid) from public;
+grant execute on function foodie.redeem_household_invite(text) to authenticated;
+grant execute on function foodie.regenerate_invite_code(uuid) to authenticated;
+grant execute on function foodie.leave_household(uuid) to authenticated;
 
 -- Invite codes are stored lowercase; normalize any existing ones.
-update public.households set invite_code = lower(invite_code) where invite_code <> lower(invite_code);
+update foodie.households set invite_code = lower(invite_code) where invite_code <> lower(invite_code);

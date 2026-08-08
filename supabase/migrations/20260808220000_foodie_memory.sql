@@ -11,18 +11,18 @@
 --    that user. The Edge Function calls these with the user's JWT: Foodie
 --    can never touch data its user couldn't.
 
-create type public.memory_category as enum
+create type foodie.memory_category as enum
   ('household_fact', 'preference', 'historical_context');
 
-create table public.memories (
+create table foodie.memories (
   id            uuid primary key default gen_random_uuid(),
-  household_id  uuid not null references public.households (id) on delete cascade,
-  category      public.memory_category not null,
+  household_id  uuid not null references foodie.households (id) on delete cascade,
+  category      foodie.memory_category not null,
   -- Stable subject key, namespaced: 'grocery.shopping_day', 'reminders.tone'.
   key           text not null,
   content       text not null,
-  source        public.action_source not null default 'user',
-  created_by    uuid references public.profiles (id) on delete set null,
+  source        foodie.action_source not null default 'user',
+  created_by    uuid references foodie.profiles (id) on delete set null,
   is_active     boolean not null default true,
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now(),
@@ -31,26 +31,26 @@ create table public.memories (
 );
 
 create index idx_memories_household
-  on public.memories (household_id, category)
+  on foodie.memories (household_id, category)
   where is_active and deleted_at is null;
 
 create trigger trg_memories_updated_at
-  before update on public.memories
-  for each row execute function public.set_updated_at();
+  before update on foodie.memories
+  for each row execute function foodie.set_updated_at();
 
 create trigger trg_audit_memories
-  after insert or update or delete on public.memories
-  for each row execute function public.log_record_history();
+  after insert or update or delete on foodie.memories
+  for each row execute function foodie.log_record_history();
 
-alter table public.memories enable row level security;
+alter table foodie.memories enable row level security;
 
-create policy memories_member_all on public.memories
-  for all using (public.is_household_member(household_id))
-  with check (public.is_household_member(household_id));
+create policy memories_member_all on foodie.memories
+  for all using (foodie.is_household_member(household_id))
+  with check (foodie.is_household_member(household_id));
 
 -- The human whose request the agent was serving.
-alter table public.agent_actions
-  add column requested_by uuid references public.profiles (id) on delete set null;
+alter table foodie.agent_actions
+  add column requested_by uuid references foodie.profiles (id) on delete set null;
 
 -- ---------------------------------------------------------------------------
 -- Agent write RPCs. Validation raises structured error codes the tool layer
@@ -60,19 +60,19 @@ alter table public.agent_actions
 
 -- Upsert a durable memory. Re-saving the same (category, key) replaces the
 -- content and reactivates it.
-create or replace function public.foodie_save_memory(
+create or replace function foodie.foodie_save_memory(
   p_household uuid,
-  p_category  public.memory_category,
+  p_category  foodie.memory_category,
   p_key       text,
   p_content   text
 )
-returns public.memories
+returns foodie.memories
 language plpgsql
 as $$
 declare
-  result public.memories;
+  result foodie.memories;
 begin
-  if not public.is_household_member(p_household) then
+  if not foodie.is_household_member(p_household) then
     raise exception 'not a household member' using errcode = 'P0006';
   end if;
   if p_key is null or length(trim(p_key)) = 0 or length(p_key) > 200 then
@@ -84,7 +84,7 @@ begin
 
   perform set_config('app.action_source', 'foodie', true);
 
-  insert into public.memories (household_id, category, key, content, source, created_by)
+  insert into foodie.memories (household_id, category, key, content, source, created_by)
   values (p_household, p_category, trim(p_key), trim(p_content), 'foodie', auth.uid())
   on conflict (household_id, category, key) do update
     set content    = excluded.content,
@@ -99,21 +99,21 @@ $$;
 
 -- Add an item to the household's default grocery list (creating the list on
 -- first use). Item is marked source='agent'.
-create or replace function public.foodie_add_grocery_item(
+create or replace function foodie.foodie_add_grocery_item(
   p_household uuid,
   p_name      text,
   p_quantity  numeric default null,
   p_unit      text default null,
   p_notes     text default null
 )
-returns public.grocery_items
+returns foodie.grocery_items
 language plpgsql
 as $$
 declare
   list_id uuid;
-  result  public.grocery_items;
+  result  foodie.grocery_items;
 begin
-  if not public.is_household_member(p_household) then
+  if not foodie.is_household_member(p_household) then
     raise exception 'not a household member' using errcode = 'P0006';
   end if;
   if p_name is null or length(trim(p_name)) = 0 or length(p_name) > 200 then
@@ -126,7 +126,7 @@ begin
   perform set_config('app.action_source', 'foodie', true);
 
   select id into list_id
-  from public.grocery_lists
+  from foodie.grocery_lists
   where household_id = p_household
     and archived_at is null
     and deleted_at is null
@@ -134,12 +134,12 @@ begin
   limit 1;
 
   if list_id is null then
-    insert into public.grocery_lists (household_id, name)
+    insert into foodie.grocery_lists (household_id, name)
     values (p_household, 'Groceries')
     returning id into list_id;
   end if;
 
-  insert into public.grocery_items
+  insert into foodie.grocery_items
     (household_id, grocery_list_id, name, quantity, unit, notes, source)
   values
     (p_household, list_id, trim(p_name), p_quantity, nullif(trim(coalesce(p_unit, '')), ''),
@@ -150,7 +150,7 @@ begin
 end;
 $$;
 
-revoke execute on function public.foodie_save_memory(uuid, public.memory_category, text, text) from public;
-revoke execute on function public.foodie_add_grocery_item(uuid, text, numeric, text, text) from public;
-grant execute on function public.foodie_save_memory(uuid, public.memory_category, text, text) to authenticated;
-grant execute on function public.foodie_add_grocery_item(uuid, text, numeric, text, text) to authenticated;
+revoke execute on function foodie.foodie_save_memory(uuid, foodie.memory_category, text, text) from public;
+revoke execute on function foodie.foodie_add_grocery_item(uuid, text, numeric, text, text) from public;
+grant execute on function foodie.foodie_save_memory(uuid, foodie.memory_category, text, text) to authenticated;
+grant execute on function foodie.foodie_add_grocery_item(uuid, text, numeric, text, text) to authenticated;

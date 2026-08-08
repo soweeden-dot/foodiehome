@@ -3,7 +3,16 @@
 create schema auth;
 
 -- Supabase's client-facing role; migrations reference it in GRANTs.
-create role authenticated nologin;
+-- Roles are cluster-global (not per-database) in Postgres, and this stub
+-- runs once per test database within the same cluster — guard against
+-- "role already exists" on the second and subsequent runs.
+do $$
+begin
+  if not exists (select 1 from pg_roles where rolname = 'authenticated') then
+    create role authenticated nologin;
+  end if;
+end
+$$;
 
 create table auth.users (
   id                 uuid primary key default gen_random_uuid(),
