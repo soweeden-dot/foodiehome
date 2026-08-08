@@ -85,6 +85,30 @@ Rejected: Bloc (too much ceremony for a two-person app), Provider (weaker compos
 - Guarded redirects for auth state (route guard reads a Riverpod auth provider).
 - Cooking Mode and the kitchen dashboard are ordinary routes that can be locked in via kiosk-style behavior (Guided Access on the iPad handles the OS side).
 
+> **Implemented (Stream 4):** `core/router.dart` — a single `GoRouter` with one `redirect` keyed off `sessionProvider` (SignedOut → `/signin`, NeedsHousehold → `/setup`, Ready → the shell) and one `StatefulShellRoute.indexedStack` whose branches are generated from a single destination list (`features/shell/destinations.dart`) covering every future section (Home, Grocery, Foodie, Inventory, Recipes, Meal Plan, Fermentation, Home Care, Filters & Supplies, Settings). Unbuilt sections render `PlaceholderScreen` — a deliberately dumb, uncoupled body so a later stream's real screen is a one-line swap in `_destinationBody`, never a router rewrite. Auth protection is unaffected by device or layout: Kitchen Device Mode changes chrome only (§ below), never the redirect logic.
+
+### Responsive shell — three explicit chromes, not a stretched phone UI
+
+`core/shell_layout.dart` resolves one of three layouts from window width and the Kitchen Mode flag:
+
+| Layout | Trigger | Chrome (`features/shell/app_shell.dart`) |
+|---|---|---|
+| `phone` | width `< 840` | Bottom `NavigationBar` with primary destinations (Home/Grocery/Foodie) + a "More" sheet for the rest |
+| `tablet` | width `>= 840` | `NavigationRail`, all destinations labeled — the personal-iPad planning posture |
+| `kitchen` | Kitchen Mode enabled (any width) | Simplified fixed sidebar, large touch targets (112×92), few destinations, Settings reachable only via a small gear |
+
+840px is Material 3's "expanded" breakpoint — the same iPad-class threshold used elsewhere in Flutter's own responsive guidance. Kitchen Mode always wins over width, so the mode is predictable regardless of the device's actual screen size.
+
+### Kitchen Device Mode
+
+A **device-local UI preference**, not a household setting and not a separate identity — the kitchen iPad signs in with the normal household account, exactly as decided in Stream 2. Storage: `core/kitchen_mode.dart` reads/writes a single boolean (`device.kitchen_mode`) through `SharedPreferences` (NSUserDefaults on iOS), behind a `DeviceKeyValueStore` seam so tests can fake per-device storage. This value is **never synced to Supabase and never part of any household table** — enabling it on the kitchen iPad cannot affect the iPhone or personal iPad, because each installation has its own local preference store by construction, not by convention.
+
+Kitchen Mode is presentation-only: it changes which `ShellLayout` is selected and therefore which chrome renders. It does not touch `sessionProvider`, the router's redirect, RLS, or any data-access path — a signed-out device in Kitchen Mode still lands on `/signin`, and a Kitchen-Mode session reads exactly the same household data through exactly the same gateways as any other layout. Toggled today from Settings (reachable from the kitchen shell via the gear icon specifically so the mode can be turned off on-device). Deferred: kiosk/Guided Access automation, voice activation, cooking-focused screens, dashboard-first content — all layered onto this foundation in later streams without changing the storage model.
+
+### Home dashboard boundary
+
+`features/dashboard/dashboard_screen.dart` is the route (`/home`) the future Apolosign-style dashboard (Stream 5) will populate. Stream 4 ships only the boundary: household identity and a persistent "Ask Foodie" entry point, so the route/layout seam is proven before any card is built.
+
 ## 5. Local/Offline Database — Drift (SQLite)
 
 **Recommendation: Drift** as a real persistent local database, not a cache.
@@ -475,4 +499,4 @@ What this architecture guarantees now:
 
 ---
 
-*End of architecture document. Streams delivered so far: 1 (schema — `DATABASE.md`, `supabase/migrations/`), 2 (auth/membership — migration 12, `app/`), 3 (Foodie core — `docs/FOODIE.md`, `supabase/functions/`, migration 13). The agent architecture of §12–§15 is now implemented as described; `docs/FOODIE.md` is its authoritative reference. Decision log: `docs/DECISIONS.md`.*
+*End of architecture document. Streams delivered so far: 1 (schema — `DATABASE.md`, `supabase/migrations/`), 2 (auth/membership — migration 12, `app/`), 3 (Foodie core — `docs/FOODIE.md`, `supabase/functions/`, migration 13), 4 (app shell/navigation/Kitchen Device Mode — §4 above, `app/lib/core/{router,shell_layout,kitchen_mode}.dart`, `app/lib/features/shell/`). The agent architecture of §12–§15 is now implemented as described; `docs/FOODIE.md` is its authoritative reference. Decision log: `docs/DECISIONS.md`.*

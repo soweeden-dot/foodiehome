@@ -5,12 +5,12 @@ import 'package:foodiehome/app.dart';
 import 'package:foodiehome/features/auth/household_gate_screen.dart';
 import 'package:foodiehome/features/auth/session.dart';
 import 'package:foodiehome/features/auth/sign_in_screen.dart';
-import 'package:foodiehome/features/home/home_placeholder_screen.dart';
+import 'package:foodiehome/features/dashboard/dashboard_screen.dart';
 
 import 'fakes.dart';
 
 void main() {
-  testWidgets('signed out → sign in → create household → home',
+  testWidgets('signed out → sign in → create household → dashboard',
       (tester) async {
     final auth = FakeAuthGateway()..accounts['a@b.c'] = 'pw';
     final households = FakeHouseholdGateway();
@@ -40,13 +40,15 @@ void main() {
     expect(find.byType(HouseholdGateScreen), findsOneWidget);
 
     await tester.enterText(
-        find.widgetWithText(TextField, 'Household name'), 'Home');
+        find.widgetWithText(TextField, 'Household name'), 'Sunnybrook');
     await tester.tap(find.widgetWithText(FilledButton, 'Create'));
     await tester.pumpAndSettle();
 
-    // Household exists: placeholder home with the household name.
-    expect(find.byType(HomePlaceholderScreen), findsOneWidget);
-    expect(find.text('Home'), findsOneWidget);
+    // Household exists: the dashboard boundary shows the household name.
+    // (Named distinctly from the "Home" nav destination to avoid a text
+    // collision in the phone shell's bottom bar.)
+    expect(find.byType(DashboardScreen), findsOneWidget);
+    expect(find.text('Sunnybrook'), findsOneWidget);
   });
 
   testWidgets('wrong invite code shows an error and stays on the gate',

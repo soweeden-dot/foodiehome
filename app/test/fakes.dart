@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:foodiehome/core/kitchen_mode.dart';
 import 'package:foodiehome/data/auth_gateway.dart';
+import 'package:foodiehome/data/foodie_gateway.dart';
 import 'package:foodiehome/data/household_gateway.dart';
 import 'package:foodiehome/domain/household.dart';
 
@@ -106,4 +108,40 @@ class FakeHouseholdGateway implements HouseholdGateway {
 
   @override
   Future<String> regenerateInviteCode(String householdId) async => 'newcode';
+}
+
+/// In-memory stand-in for one device's local storage. Two separate
+/// instances simulate two separate physical devices — nothing is shared
+/// between them, which is exactly the property Kitchen Mode depends on.
+class FakeDeviceKeyValueStore implements DeviceKeyValueStore {
+  FakeDeviceKeyValueStore({bool? kitchenMode})
+      : _values = {'device.kitchen_mode': ?kitchenMode};
+
+  final Map<String, bool> _values;
+
+  @override
+  Future<bool?> getBool(String key) async => _values[key];
+
+  @override
+  Future<void> setBool(String key, bool value) async => _values[key] = value;
+}
+
+class FakeFoodieGateway implements FoodieGateway {
+  FakeFoodieGateway([List<FoodieReply>? replies]) : _replies = replies ?? [];
+
+  final List<FoodieReply> _replies;
+  final List<({String message, String? conversationId})> calls = [];
+
+  @override
+  Future<FoodieReply> sendMessage({
+    required String message,
+    String? conversationId,
+  }) async {
+    calls.add((message: message, conversationId: conversationId));
+    if (_replies.isEmpty) {
+      return const FoodieReply(
+          conversationId: 'conv-fake', text: 'Hi!', actions: []);
+    }
+    return _replies.removeAt(0);
+  }
 }

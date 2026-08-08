@@ -30,3 +30,13 @@ Constraints going forward:
 - **Separate applications and databases.** No shared-database redesign; no Stream 1 migration changes solely to merge systems. Interop arrives later through a scoped interoperability layer.
 - **Provenance:** audit architecture must be compatible with action sources `user | foodie | atlas | katie | system`. Implemented in migration 12 as the `action_source` enum: `record_history.source`, `agent_actions.source`, `fermentation_logs.author` all use it. Server-side writers declare themselves via the `app.action_source` GUC (PostgREST clients cannot set it; default is `user`).
 - **Unified Morning Brief (future):** one combined morning SMS. Each agent contributes only a structured briefing payload (source_agent, type, priority, start/end time, summary, metadata) — never direct database access. A coordinator merges/dedupes/orders contributions and sends through the existing channel-neutral notification pipeline (`notifications` → `notification_deliveries`). Not built yet; Stream 2+ must simply not block it — the channel-neutral pipeline and `action_source` vocabulary are the compatibility points, and nothing assumes Foodie is the only brief producer.
+
+## 2026-08-08 — Stream 3 approval / entering Stream 4 (with live smoke test)
+
+1. **Live Stream 3 smoke test requested before Stream 4.** No Supabase CLI, linked project, or `ANTHROPIC_API_KEY`/`SUPABASE_*` credentials exist in this execution environment — verified by absence of a `supabase link` state and of any matching environment variables. The live smoke test (items 1–10 of the request) could not be performed and was not faked; the pipeline was instead re-verified via its existing offline test suites (DB harness: 3/3 passed; Deno: 22/22 passed) plus a static secret-leak check (see Stream 4 completion report for the full breakdown). **Outstanding:** a real end-to-end run against a live Supabase project + Anthropic key remains unverified and should be the first action once those credentials exist.
+
+## 2026-08-08 — Stream 4 in progress
+
+1. **Kitchen Device Mode storage confirmed device-local:** `SharedPreferences`-backed boolean (`device.kitchen_mode`), never written to Supabase, never part of any household table. Enabling it on one installation cannot affect another by construction (each install has its own preference store), not by convention or a household-scoped flag that happens not to be read elsewhere.
+2. **840px** adopted as the phone/tablet breakpoint (Material 3 "expanded" class) — Kitchen Mode overrides it regardless of width.
+3. Kitchen Mode confirmed presentation-only: it does not participate in the router's auth redirect, RLS, or any data-access path.
