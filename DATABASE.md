@@ -1,9 +1,9 @@
-# FoodieHome — Database Design (Stream 1)
+# FoodieHome — Database Design (Streams 1–2)
 
-**Status:** Stream 1 deliverable — core schema, RLS, audit, notification foundation.
-**Migrations:** `supabase/migrations/` (11 files, applied in filename order). Schema changes happen **only** through new migration files — never by editing applied migrations, never through the Supabase dashboard.
+**Status:** Stream 1 core schema + Stream 2 membership/provenance.
+**Migrations:** `supabase/migrations/` (12 files, applied in filename order). Schema changes happen **only** through new migration files — never by editing applied migrations, never through the Supabase dashboard.
 
-All 32 tables were validated against a real Postgres 16 instance (migrations apply cleanly; RLS member/outsider behavior and audit triggers smoke-tested — see `supabase/tests/`).
+All 32 tables were validated against a real Postgres 16 instance (migrations apply cleanly; RLS member/outsider behavior, membership RPCs, and audit triggers are exercised by the test suite — see `supabase/tests/`).
 
 ---
 
@@ -131,6 +131,24 @@ Storage only in Stream 1 — no agent code, no tools. `agent_actions` is written
 
 `record_history`.
 
+### Membership & provenance (`20260808180000_membership_and_provenance.sql`) — Stream 2
+
+**Provenance.** The `action_source` enum (`user | foodie | atlas | katie | system`) is the shared vocabulary for *what kind of actor* did something — chosen for compatibility with the wider multi-agent ecosystem (Atlas and Katie are separate apps; see `docs/DECISIONS.md`). It appears as:
+
+- `record_history.source` — filled by the audit trigger from the `app.action_source` GUC (default `'user'`). Only server-side code (Edge Functions, workers) can set that GUC; PostgREST clients cannot, so provenance is not client-spoofable through the API.
+- `agent_actions.source` — default `'foodie'`; a future interop layer would write `'atlas'`/`'katie'`.
+- `fermentation_logs.author` — migrated from the old two-value `log_author` enum (dropped).
+
+**Membership RPCs** (SECURITY DEFINER, `authenticated`-only EXECUTE):
+
+| Function | Behavior |
+|---|---|
+| `redeem_household_invite(code)` | Case-insensitive; joins as `member`; idempotent for existing members; definer because the caller isn't yet a member. Errors: `P0002` unauthenticated, `P0003` invalid code. |
+| `regenerate_invite_code(hh)` | Admin-only (`P0004`); rotates and returns the new code; old code immediately dead. |
+| `leave_household(hh)` | Removes own membership (`P0005` if not a member). |
+
+**Last-admin protection:** a `BEFORE UPDATE OR DELETE` trigger on `household_members` rejects removing or demoting a household's only admin (`P0001`). Combined with households being client-undeletable, a household can never be orphaned from the app; actual deletion stays a deliberate service-role act.
+
 ## 4. Relationship map (condensed)
 
 ```
@@ -212,6 +230,7 @@ Exceptions to the standard policy:
 2. **All members are peers on domain data.** Roles gate only household/roster management. Assignment columns (`assigned_user_id`, `recipient_user_id`) are informational, not access control — appropriate for a two-person household and revisitable via policy changes alone.
 3. **Edge Functions run with the caller's JWT by default** (RLS applies); the service role is used only for the narrow writer paths named above and always derives household scope server-side.
 4. **Supabase's default grants** (`authenticated` gets table privileges; RLS restricts rows) are assumed; the local validation harness replicates this.
+   4a. **Invite codes are the join secret.** Anyone with a valid code and an account can join the household as `member`. Acceptable for a two-person household because codes are shared out-of-band, rotatable by admins (`regenerate_invite_code`), and every join is visible in the roster. Expiring codes can be added later without schema changes beyond a column.
 5. Cross-table integrity of denormalized `household_id` (e.g., a step's `household_id` matching its recipe's) is the app layer's job in Stream 1; hardening triggers can be added later without breaking anything. RLS is not weakened by this: writing a mismatched row requires membership in the *claimed* household, which the attacker doesn't have, and reads scope by the row's own `household_id`.
 
 ## 8. Sync-relevant schema features (engine arrives later in Stream 1's app side / Stream 19 verification)

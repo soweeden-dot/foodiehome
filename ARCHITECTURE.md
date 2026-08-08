@@ -112,6 +112,8 @@ Postgres conventions: UUID primary keys (client-generatable — required for off
 
 ## 7. Authentication & Household Model
 
+> **Decided (Stream 2):** email/password sign-in (Supabase Auth); Sign in with Apple can be added later as another Supabase provider without schema or gateway changes. The kitchen iPad signs in with a normal household account — no fake kitchen user; a Kitchen Device Mode restricting navigation comes later and rides on `devices.profile`. Household deletion remains service-role-only.
+
 - `auth.users` (Supabase-managed) → `profiles` (1:1, display name, avatar).
 - `households` — expect exactly one row, but model it properly (costs nothing, prevents weird hacks).
 - `household_members` — join table (`household_id`, `user_id`, `role`). Both of you are `admin`; the role column exists so future guests/read-only members don't require a migration.
@@ -429,12 +431,13 @@ Your plan is fundamentally sound. Changes I recommend, with reasons:
 | 12 | Fermentation Lab | — |
 | 13 | Home Care | — |
 | 14 | Assets: filters/components + household supplies | — |
-| 15 | Expanded agent tool layer (mutating tools, undo) | — |
-| 16 | Full Foodie chat UX | — |
-| 17 | Voice | — |
-| 18 | App Intents / Siri | — |
-| 19 | Offline/sync **verification** + hardening | changed meaning |
-| 20 | UI polish, testing, reliability pass | — |
+| 15 | **Notification/reminder worker** (scheduler, channel adapters, Twilio SMS provider) | added after Stream 1 — runs once the domain data it watches exists |
+| 16 | Expanded agent tool layer (mutating tools, undo) | was 15 |
+| 17 | Full Foodie chat UX | was 16 |
+| 18 | Voice | was 17 |
+| 19 | App Intents / Siri | was 18 |
+| 20 | Offline/sync **verification** + hardening | was 19 |
+| 21 | UI polish, testing, reliability pass | was 20 |
 
 Each stream ends with a verification checklist and stops for your approval, per your rules.
 
@@ -457,8 +460,19 @@ reminder_rules ──► notifications ──► notification_deliveries
 - **Fan-out is preference-driven:** `notification_preferences` (member × category × channel) decides who gets what, where. SMS numbers live on `profiles`.
 - **Trust boundary:** clients manage rules/preferences and read results; `notifications`/`notification_deliveries` rows are created only by the service-role worker.
 
-The reminder worker (scheduler + channel adapters + Twilio) needs a home in the stream plan — proposed as a new stream after 14 (assets) so event reminders have real data to watch. To be decided before Stream 2.
+The reminder worker (scheduler + channel adapters + Twilio) is **Stream 15** — after assets, before the expanded agent tool layer, so event reminders have real data to watch (decided at Stream 1 approval).
 
 ---
 
-*End of architecture document. Stream 1 (schema) delivered: see `DATABASE.md` and `supabase/migrations/`.*
+## 28. Multi-agent ecosystem (recorded at Stream 2; not implemented)
+
+Foodie is one of three separate personal agents: **Atlas** (school/academic), **Foodie** (household/food, this project), **Katie** (Keep Track: routines, workouts, calendar, personal planning). They remain **separate applications with separate databases**; a scoped interoperability layer connects them later. FoodieHome must not be redesigned around a shared database.
+
+What this architecture guarantees now:
+
+- **Provenance:** the `action_source` vocabulary (`user | foodie | atlas | katie | system`) is used across `record_history`, `agent_actions`, and `fermentation_logs` (migration 12), so cross-agent actions are attributable the day interop arrives.
+- **Unified Morning Brief (future):** one combined morning SMS assembled by a coordinator from *structured briefing contributions* (source_agent, type, priority, start/end time, summary, metadata) — never direct cross-agent database access. Compatibility points already in place: the channel-neutral notification pipeline (`notifications` → `notification_deliveries`) can carry a brief regardless of who assembled it; nothing assumes Foodie is the only producer of a notification; delivery preferences are per category, not per agent. The coordinator itself is deliberately unbuilt and unscheduled.
+
+---
+
+*End of architecture document. Streams delivered so far: 1 (schema — `DATABASE.md`, `supabase/migrations/`), 2 (auth/membership — migration 12, `app/`). Decision log: `docs/DECISIONS.md`.*

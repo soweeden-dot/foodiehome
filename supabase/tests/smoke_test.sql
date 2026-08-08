@@ -5,8 +5,8 @@
 
 \set ON_ERROR_STOP on
 
--- Simulate Supabase's "authenticated" role: full table grants, RLS enforced.
-create role authenticated nologin;
+-- Simulate Supabase's "authenticated" role grants: full table access, RLS
+-- enforced. (The role itself is created in auth_stub.sql, before migrations.)
 grant usage on schema public, auth to authenticated;
 grant all on all tables in schema public to authenticated;
 grant all on all sequences in schema public to authenticated;

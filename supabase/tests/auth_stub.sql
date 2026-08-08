@@ -2,6 +2,9 @@
 -- Postgres for local validation. NEVER deployed to the real project.
 create schema auth;
 
+-- Supabase's client-facing role; migrations reference it in GRANTs.
+create role authenticated nologin;
+
 create table auth.users (
   id                 uuid primary key default gen_random_uuid(),
   email              text,
