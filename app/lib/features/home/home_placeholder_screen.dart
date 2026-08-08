@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/household.dart';
 import '../auth/session.dart';
+import '../foodie/chat_screen.dart';
 
 class HomePlaceholderScreen extends ConsumerWidget {
   const HomePlaceholderScreen({super.key, required this.household});
@@ -35,6 +36,15 @@ class HomePlaceholderScreen extends ConsumerWidget {
               SelectableText('Invite code: ${household.inviteCode}'),
             const SizedBox(height: 8),
             const Text('App shell arrives in Stream 4.'),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              icon: const Icon(Icons.chat_bubble_outline),
+              label: const Text('Ask Foodie'),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                    builder: (_) => const FoodieChatScreen()),
+              ),
+            ),
           ],
         ),
       ),

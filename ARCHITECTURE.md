@@ -475,4 +475,4 @@ What this architecture guarantees now:
 
 ---
 
-*End of architecture document. Streams delivered so far: 1 (schema — `DATABASE.md`, `supabase/migrations/`), 2 (auth/membership — migration 12, `app/`). Decision log: `docs/DECISIONS.md`.*
+*End of architecture document. Streams delivered so far: 1 (schema — `DATABASE.md`, `supabase/migrations/`), 2 (auth/membership — migration 12, `app/`), 3 (Foodie core — `docs/FOODIE.md`, `supabase/functions/`, migration 13). The agent architecture of §12–§15 is now implemented as described; `docs/FOODIE.md` is its authoritative reference. Decision log: `docs/DECISIONS.md`.*

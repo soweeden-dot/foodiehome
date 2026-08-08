@@ -149,6 +149,17 @@ Storage only in Stream 1 — no agent code, no tools. `agent_actions` is written
 
 **Last-admin protection:** a `BEFORE UPDATE OR DELETE` trigger on `household_members` rejects removing or demoting a household's only admin (`P0001`). Combined with households being client-undeletable, a household can never be orphaned from the app; actual deletion stays a deliberate service-role act.
 
+### Foodie memory (`20260808220000_foodie_memory.sql`) — Stream 3
+
+| Table/change | Purpose |
+|---|---|
+| `memories` | Durable structured memory, separate from conversation history: `category` (`household_fact` \| `preference` \| `historical_context`), namespaced `key`, `content`, `source`, `is_active`. `UNIQUE (household_id, category, key)` makes saves upserts. Standard member RLS + audit trigger. |
+| `agent_actions.requested_by` | The human on whose behalf the agent acted. |
+| `foodie_save_memory(...)` | SECURITY **INVOKER** RPC: membership check (`P0006`), argument validation (`P0007`), sets `app.action_source='foodie'` transaction-locally, upserts the memory. RLS applies — the agent path runs as the calling user. |
+| `foodie_add_grocery_item(...)` | Same pattern; finds or creates the household's default grocery list, inserts the item with `entry_source='agent'`. |
+
+These RPCs are the **only** write paths the agent tool executor uses (see `docs/FOODIE.md`). Conversation storage (`agent_conversations`/`agent_messages`) is unchanged and deliberately unlinked from `memories` — chat is not memory.
+
 ## 4. Relationship map (condensed)
 
 ```

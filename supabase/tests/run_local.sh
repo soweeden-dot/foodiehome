@@ -29,7 +29,7 @@ for f in "$REPO_DIR"/supabase/migrations/*.sql; do
   "${PSQL[@]}" -d foodie_test -f "$f"
 done
 
-for t in smoke_test.sql membership_test.sql; do
+for t in smoke_test.sql membership_test.sql foodie_test.sql; do
   echo "running $t"
   "$PG_BIN/psql" -h "$WORK_DIR" -p "$PORT" -U postgres -d foodie_test \
     -v ON_ERROR_STOP=1 -f "$REPO_DIR/supabase/tests/$t"
