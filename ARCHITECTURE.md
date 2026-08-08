@@ -123,12 +123,16 @@ Postgres conventions: UUID primary keys (client-generatable — required for off
 Seven domains, one Postgres schema, boundaries enforced by convention (module folders in app + migration file grouping), not separate databases:
 
 **Core** — `profiles`, `households`, `household_members`, `devices`
+**Recurrence** — `recurrence_rules`, one shared vocabulary for everything that repeats (cleaning, reminders)
 **Food** — inventory, food catalog, recipes, meal plans, grocery
 **Fermentation** — projects, logs, photos
 **Home care** — cleaning schedules, completions
 **Assets** — tracked components (filters), replacements, household supplies
+**Notifications** — reminder rules, notifications, deliveries, preferences (§27)
 **Foodie** — conversations, messages, agent actions, memories, preferences
 **Audit** — change history
+
+*(As of Stream 1 the authoritative table-by-table reference is `DATABASE.md`; this section stays at concept level.)*
 
 ### Entity model (high level — not final SQL)
 
@@ -436,4 +440,25 @@ Each stream ends with a verification checklist and stops for your approval, per 
 
 ---
 
-*End of Stream 0 architecture document.*
+## 27. Notifications & Reminders (added in Stream 1)
+
+Product decision after Stream 0: Foodie will eventually send reminders (morning/evening briefs, meal prep, fermentation, cleaning, maintenance, filters, shopping) over SMS via Twilio — with delivery channels interchangeable (push, SMS, email, kitchen-dashboard announcement).
+
+Architecture (schema shipped in Stream 1; workers/providers are a later stream):
+
+```
+reminder_rules ──► notifications ──► notification_deliveries
+ (why: schedule      (one channel-       (one row per channel
+  or event)           neutral message)     attempt: sms/twilio, push/apns, …)
+```
+
+- **Rules, not records:** scheduled reminders reference the shared `recurrence_rules` table; event reminders (`filter due`, `starter feed due`, `food expiring`, `supply low`) watch domain state with thresholds in rule config. A future worker computes what fires; `dedupe_key` uniqueness makes generation idempotent. Thousands of occurrence rows are never pre-created.
+- **Provider-agnostic by construction:** reminder logic never mentions Twilio; a delivery row records `channel` + `provider` after the fact. New channels are new worker adapters, zero schema change.
+- **Fan-out is preference-driven:** `notification_preferences` (member × category × channel) decides who gets what, where. SMS numbers live on `profiles`.
+- **Trust boundary:** clients manage rules/preferences and read results; `notifications`/`notification_deliveries` rows are created only by the service-role worker.
+
+The reminder worker (scheduler + channel adapters + Twilio) needs a home in the stream plan — proposed as a new stream after 14 (assets) so event reminders have real data to watch. To be decided before Stream 2.
+
+---
+
+*End of architecture document. Stream 1 (schema) delivered: see `DATABASE.md` and `supabase/migrations/`.*
