@@ -12,7 +12,8 @@ String _formatDateTime(DateTime d) {
   final local = d.toLocal();
   final date =
       '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
-  final time = '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+  final time =
+      '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
   return '$date $time';
 }
 
@@ -30,8 +31,13 @@ class FermentationProjectScreen extends ConsumerWidget {
         title: Text(detail.value?.project.name ?? 'Fermentation project'),
       ),
       body: switch (detail) {
-        AsyncData(value: final d) => _ProjectBody(projectId: projectId, detail: d),
-        AsyncError(error: final error) => Center(child: Text('Could not load project: $error')),
+        AsyncData(value: final d) => _ProjectBody(
+          projectId: projectId,
+          detail: d,
+        ),
+        AsyncError(error: final error) => Center(
+          child: Text('Could not load project: $error'),
+        ),
         _ => const Center(child: CircularProgressIndicator()),
       },
     );
@@ -65,12 +71,14 @@ class _ProjectBody extends ConsumerWidget {
           children: [
             Chip(label: Text(project.projectType)),
             Chip(label: Text(project.status.label)),
-            if (project.currentStage != null) Chip(label: Text(project.currentStage!)),
+            if (project.currentStage != null)
+              Chip(label: Text(project.currentStage!)),
           ],
         ),
         const SizedBox(height: 12),
         Text('Started ${_formatDateTime(project.startedAt)}'),
-        if (project.nextCheckAt != null) Text('Next check-in: ${_formatDateTime(project.nextCheckAt!)}'),
+        if (project.nextCheckAt != null)
+          Text('Next check-in: ${_formatDateTime(project.nextCheckAt!)}'),
         if (project.notes != null) ...[
           const SizedBox(height: 8),
           Text(project.notes!, style: Theme.of(context).textTheme.bodyMedium),
@@ -87,15 +95,7 @@ class _ProjectBody extends ConsumerWidget {
               '${lastFeeding.waterG?.toStringAsFixed(0)}g water',
             ),
             Text(
-              'Hydration ${sourdough.computeHydrationPercent(sourdough.FeedingMeasurements(
-                starterG: lastFeeding.starterG!,
-                flourG: lastFeeding.flourG!,
-                waterG: lastFeeding.waterG!,
-              )).toStringAsFixed(1)}% · Ratio ${sourdough.computeFeedRatio(sourdough.FeedingMeasurements(
-                starterG: lastFeeding.starterG!,
-                flourG: lastFeeding.flourG!,
-                waterG: lastFeeding.waterG!,
-              ))}',
+              'Hydration ${sourdough.computeHydrationPercent(sourdough.FeedingMeasurements(starterG: lastFeeding.starterG!, flourG: lastFeeding.flourG!, waterG: lastFeeding.waterG!)).toStringAsFixed(1)}% · Ratio ${sourdough.computeFeedRatio(sourdough.FeedingMeasurements(starterG: lastFeeding.starterG!, flourG: lastFeeding.flourG!, waterG: lastFeeding.waterG!))}',
             ),
           ] else
             const Text('No feedings logged yet.'),
@@ -107,7 +107,9 @@ class _ProjectBody extends ConsumerWidget {
                     ? 'Feeding overdue — was due ${_formatDateTime(nextFeedDue)}'
                     : 'Next feed due ${_formatDateTime(nextFeedDue)}',
                 style: TextStyle(
-                  color: feedOverdue ? Theme.of(context).colorScheme.error : null,
+                  color: feedOverdue
+                      ? Theme.of(context).colorScheme.error
+                      : null,
                   fontWeight: feedOverdue ? FontWeight.bold : null,
                 ),
               ),
@@ -142,7 +144,10 @@ class _ProjectBody extends ConsumerWidget {
                 label: const Text('Update stage'),
                 onPressed: () => showDialog<void>(
                   context: context,
-                  builder: (_) => _UpdateStageDialog(projectId: projectId, project: project),
+                  builder: (_) => _UpdateStageDialog(
+                    projectId: projectId,
+                    project: project,
+                  ),
                 ),
               ),
             ),
@@ -169,11 +174,15 @@ class _LogTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final parts = <String>[];
     if (log.logType == FermentationLogType.feeding) {
-      parts.add('${log.starterG?.toStringAsFixed(0)}g / ${log.flourG?.toStringAsFixed(0)}g / '
-          '${log.waterG?.toStringAsFixed(0)}g');
+      parts.add(
+        '${log.starterG?.toStringAsFixed(0)}g / ${log.flourG?.toStringAsFixed(0)}g / '
+        '${log.waterG?.toStringAsFixed(0)}g',
+      );
       if (log.flourType != null) parts.add(log.flourType!);
     } else if (log.payload.isNotEmpty) {
-      parts.add(log.payload.entries.map((e) => '${e.key}: ${e.value}').join(', '));
+      parts.add(
+        log.payload.entries.map((e) => '${e.key}: ${e.value}').join(', '),
+      );
     }
     if (log.notes != null) parts.add(log.notes!);
 
@@ -181,10 +190,12 @@ class _LogTile extends StatelessWidget {
       dense: true,
       leading: const Icon(Icons.circle, size: 10),
       title: Text(log.logType.label),
-      subtitle: Text([
-        _formatDateTime(log.loggedAt),
-        if (parts.isNotEmpty) parts.join(' · '),
-      ].join('\n')),
+      subtitle: Text(
+        [
+          _formatDateTime(log.loggedAt),
+          if (parts.isNotEmpty) parts.join(' · '),
+        ].join('\n'),
+      ),
       isThreeLine: parts.isNotEmpty,
     );
   }
@@ -236,7 +247,9 @@ class _LogFeedingDialogState extends ConsumerState<_LogFeedingDialog> {
       setState(() => _error = 'Water amount must be a positive number.');
       return;
     }
-    final discardG = _discard.text.trim().isEmpty ? null : double.tryParse(_discard.text.trim());
+    final discardG = _discard.text.trim().isEmpty
+        ? null
+        : double.tryParse(_discard.text.trim());
 
     setState(() {
       _busy = true;
@@ -244,12 +257,16 @@ class _LogFeedingDialogState extends ConsumerState<_LogFeedingDialog> {
     });
     try {
       await ref
-          .read(fermentationProjectControllerProvider(widget.projectId).notifier)
+          .read(
+            fermentationProjectControllerProvider(widget.projectId).notifier,
+          )
           .logSourdoughFeeding(
             starterG: starterG,
             flourG: flourG,
             waterG: waterG,
-            flourType: _flourType.text.trim().isEmpty ? null : _flourType.text.trim(),
+            flourType: _flourType.text.trim().isEmpty
+                ? null
+                : _flourType.text.trim(),
             discardG: discardG,
             notes: _notes.text.trim().isEmpty ? null : _notes.text.trim(),
           );
@@ -274,7 +291,9 @@ class _LogFeedingDialogState extends ConsumerState<_LogFeedingDialog> {
                 Expanded(
                   child: TextField(
                     controller: _starter,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     decoration: const InputDecoration(labelText: 'Starter (g)'),
                     autofocus: true,
                   ),
@@ -283,7 +302,9 @@ class _LogFeedingDialogState extends ConsumerState<_LogFeedingDialog> {
                 Expanded(
                   child: TextField(
                     controller: _flour,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     decoration: const InputDecoration(labelText: 'Flour (g)'),
                   ),
                 ),
@@ -291,7 +312,9 @@ class _LogFeedingDialogState extends ConsumerState<_LogFeedingDialog> {
                 Expanded(
                   child: TextField(
                     controller: _water,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     decoration: const InputDecoration(labelText: 'Water (g)'),
                   ),
                 ),
@@ -300,24 +323,35 @@ class _LogFeedingDialogState extends ConsumerState<_LogFeedingDialog> {
             const SizedBox(height: 12),
             TextField(
               controller: _flourType,
-              decoration: const InputDecoration(labelText: 'Flour type (optional)'),
+              decoration: const InputDecoration(
+                labelText: 'Flour type (optional)',
+              ),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _discard,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(labelText: 'Discard (g, optional)'),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: const InputDecoration(
+                labelText: 'Discard (g, optional)',
+              ),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _notes,
-              decoration: const InputDecoration(labelText: 'Notes (e.g. rise/peak observations)'),
+              decoration: const InputDecoration(
+                labelText: 'Notes (e.g. rise/peak observations)',
+              ),
               maxLines: 2,
             ),
             if (_error != null)
               Padding(
                 padding: const EdgeInsets.only(top: 12),
-                child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                child: Text(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
               ),
           ],
         ),
@@ -380,7 +414,11 @@ class _LogEventDialogState extends ConsumerState<_LogEventDialog> {
       _error = null;
     });
     try {
-      await ref.read(fermentationProjectControllerProvider(widget.projectId).notifier).logEvent(
+      await ref
+          .read(
+            fermentationProjectControllerProvider(widget.projectId).notifier,
+          )
+          .logEvent(
             logType: _logType,
             payload: payload,
             notes: _notes.text.trim().isEmpty ? null : _notes.text.trim(),
@@ -401,10 +439,13 @@ class _LogEventDialogState extends ConsumerState<_LogEventDialog> {
         mainAxisSize: MainAxisSize.min,
         children: [
           DropdownButtonFormField<FermentationLogType>(
+            isExpanded: true,
             initialValue: _logType,
             decoration: const InputDecoration(labelText: 'Type'),
             items: _genericLogTypes.entries
-                .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
+                .map(
+                  (e) => DropdownMenuItem(value: e.key, child: Text(e.value)),
+                )
                 .toList(),
             onChanged: (value) => setState(() => _logType = value ?? _logType),
           ),
@@ -412,7 +453,9 @@ class _LogEventDialogState extends ConsumerState<_LogEventDialog> {
             const SizedBox(height: 12),
             TextField(
               controller: _tempC,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               decoration: const InputDecoration(labelText: 'Temperature (°C)'),
             ),
           ],
@@ -421,14 +464,18 @@ class _LogEventDialogState extends ConsumerState<_LogEventDialog> {
             controller: _notes,
             decoration: const InputDecoration(
               labelText: 'Notes',
-              helperText: 'Smell, appearance, liquid/drainage, anything worth recording',
+              helperText:
+                  'Smell, appearance, liquid/drainage, anything worth recording',
             ),
             maxLines: 3,
           ),
           if (_error != null)
             Padding(
               padding: const EdgeInsets.only(top: 12),
-              child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              child: Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
             ),
         ],
       ),
@@ -457,7 +504,9 @@ class _UpdateStageDialog extends ConsumerStatefulWidget {
 }
 
 class _UpdateStageDialogState extends ConsumerState<_UpdateStageDialog> {
-  late final _stage = TextEditingController(text: widget.project.currentStage ?? '');
+  late final _stage = TextEditingController(
+    text: widget.project.currentStage ?? '',
+  );
   final _notes = TextEditingController();
   late FermentationStatus? _status = widget.project.status;
   bool _busy = false;
@@ -477,8 +526,15 @@ class _UpdateStageDialogState extends ConsumerState<_UpdateStageDialog> {
     });
     try {
       final newStage = _stage.text.trim();
-      await ref.read(fermentationProjectControllerProvider(widget.projectId).notifier).updateStage(
-            currentStage: newStage.isEmpty || newStage == widget.project.currentStage ? null : newStage,
+      await ref
+          .read(
+            fermentationProjectControllerProvider(widget.projectId).notifier,
+          )
+          .updateStage(
+            currentStage:
+                newStage.isEmpty || newStage == widget.project.currentStage
+                ? null
+                : newStage,
             status: _status == widget.project.status ? null : _status,
             notes: _notes.text.trim().isEmpty ? null : _notes.text.trim(),
           );
@@ -499,11 +555,15 @@ class _UpdateStageDialogState extends ConsumerState<_UpdateStageDialog> {
         children: [
           TextField(
             controller: _stage,
-            decoration: const InputDecoration(labelText: 'Current stage', hintText: "e.g. 'drying', 'day 3'"),
+            decoration: const InputDecoration(
+              labelText: 'Current stage',
+              hintText: "e.g. 'drying', 'day 3'",
+            ),
             autofocus: true,
           ),
           const SizedBox(height: 12),
           DropdownButtonFormField<FermentationStatus>(
+            isExpanded: true,
             initialValue: _status,
             decoration: const InputDecoration(labelText: 'Status'),
             items: FermentationStatus.values
@@ -520,7 +580,10 @@ class _UpdateStageDialogState extends ConsumerState<_UpdateStageDialog> {
           if (_error != null)
             Padding(
               padding: const EdgeInsets.only(top: 12),
-              child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              child: Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
             ),
         ],
       ),

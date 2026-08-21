@@ -140,10 +140,7 @@ class _MaintenanceTab extends ConsumerWidget {
     return Scaffold(
       floatingActionButton: FloatingActionButton(
         tooltip: 'Report an issue',
-        onPressed: () => showDialog<void>(
-          context: context,
-          builder: (_) => const _ReportIssueDialog(),
-        ),
+        onPressed: () => showReportMaintenanceIssueDialog(context),
         child: const Icon(Icons.add),
       ),
       body: switch (issues) {
@@ -215,6 +212,13 @@ class _MaintenanceIssueTileState extends ConsumerState<_MaintenanceIssueTile> {
                 ),
     );
   }
+}
+
+/// Reusable "report a maintenance issue" dialog — the Home Care screen's
+/// FAB and the dashboard's "Report maintenance issue" quick action both
+/// open this.
+Future<void> showReportMaintenanceIssueDialog(BuildContext context) {
+  return showDialog<void>(context: context, builder: (_) => const _ReportIssueDialog());
 }
 
 class _ReportIssueDialog extends ConsumerStatefulWidget {

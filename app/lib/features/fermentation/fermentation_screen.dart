@@ -19,24 +19,26 @@ class FermentationScreen extends ConsumerWidget {
       appBar: AppBar(title: const Text('Fermentation')),
       floatingActionButton: FloatingActionButton(
         tooltip: 'Start a new project',
-        onPressed: () => showDialog<void>(
-          context: context,
-          builder: (_) => const _NewProjectDialog(),
-        ),
+        onPressed: () => showNewFermentationProjectDialog(context),
         child: const Icon(Icons.add),
       ),
       body: switch (projects) {
-        AsyncData(value: final list) => list.isEmpty
-            ? const _EmptyState(
-                icon: Icons.science_outlined,
-                title: 'No active fermentation projects',
-                message: 'Tap + to start tracking a sourdough starter, a cacao batch, or anything else fermenting.',
-              )
-            : ListView.builder(
-                itemCount: list.length,
-                itemBuilder: (context, index) => _ProjectTile(project: list[index]),
-              ),
-        AsyncError(error: final error) => Center(child: Text('Could not load fermentation projects: $error')),
+        AsyncData(value: final list) =>
+          list.isEmpty
+              ? const _EmptyState(
+                  icon: Icons.science_outlined,
+                  title: 'No active fermentation projects',
+                  message:
+                      'Tap + to start tracking a sourdough starter, a cacao batch, or anything else fermenting.',
+                )
+              : ListView.builder(
+                  itemCount: list.length,
+                  itemBuilder: (context, index) =>
+                      _ProjectTile(project: list[index]),
+                ),
+        AsyncError(error: final error) => Center(
+          child: Text('Could not load fermentation projects: $error'),
+        ),
         _ => const Center(child: CircularProgressIndicator()),
       },
     );
@@ -57,14 +59,30 @@ class _ProjectTile extends StatelessWidget {
     ];
 
     return ListTile(
-      leading: Icon(project.isSourdough ? Icons.bakery_dining_outlined : Icons.science_outlined),
+      leading: Icon(
+        project.isSourdough
+            ? Icons.bakery_dining_outlined
+            : Icons.science_outlined,
+      ),
       title: Text(project.name),
       subtitle: Text(subtitleParts.join(' · ')),
-      onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
-        builder: (_) => FermentationProjectScreen(projectId: project.id),
-      )),
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => FermentationProjectScreen(projectId: project.id),
+        ),
+      ),
     );
   }
+}
+
+/// Reusable "start a fermentation project" dialog — the fermentation
+/// screen's FAB and the dashboard's "Start fermentation" quick action both
+/// open this.
+Future<void> showNewFermentationProjectDialog(BuildContext context) {
+  return showDialog<void>(
+    context: context,
+    builder: (_) => const _NewProjectDialog(),
+  );
 }
 
 class _NewProjectDialog extends ConsumerStatefulWidget {
@@ -99,7 +117,9 @@ class _NewProjectDialogState extends ConsumerState<_NewProjectDialog> {
       setState(() => _error = 'Name is required.');
       return;
     }
-    final projectType = _projectType == 'other' ? _customType.text.trim() : _projectType;
+    final projectType = _projectType == 'other'
+        ? _customType.text.trim()
+        : _projectType;
     if (projectType.isEmpty) {
       setState(() => _error = 'Fermentation type is required.');
       return;
@@ -112,7 +132,9 @@ class _NewProjectDialogState extends ConsumerState<_NewProjectDialog> {
       final targetParams = _projectType == 'sourdough_starter'
           ? {'state': 'active', 'feed_interval_hours': 24}
           : null;
-      await ref.read(fermentationControllerProvider.notifier).createProject(
+      await ref
+          .read(fermentationControllerProvider.notifier)
+          .createProject(
             projectType: projectType,
             name: _name.text.trim(),
             targetParams: targetParams,
@@ -133,12 +155,16 @@ class _NewProjectDialogState extends ConsumerState<_NewProjectDialog> {
         mainAxisSize: MainAxisSize.min,
         children: [
           DropdownButtonFormField<String>(
+            isExpanded: true,
             initialValue: _projectType,
             decoration: const InputDecoration(labelText: 'Type'),
             items: _knownTypes.entries
-                .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
+                .map(
+                  (e) => DropdownMenuItem(value: e.key, child: Text(e.value)),
+                )
                 .toList(),
-            onChanged: (value) => setState(() => _projectType = value ?? _projectType),
+            onChanged: (value) =>
+                setState(() => _projectType = value ?? _projectType),
           ),
           if (_projectType == 'other') ...[
             const SizedBox(height: 12),
@@ -156,7 +182,10 @@ class _NewProjectDialogState extends ConsumerState<_NewProjectDialog> {
           if (_error != null)
             Padding(
               padding: const EdgeInsets.only(top: 12),
-              child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              child: Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
             ),
         ],
       ),
@@ -175,7 +204,11 @@ class _NewProjectDialogState extends ConsumerState<_NewProjectDialog> {
 }
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.icon, required this.title, required this.message});
+  const _EmptyState({
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
 
   final IconData icon;
   final String title;
@@ -197,7 +230,9 @@ class _EmptyState extends StatelessWidget {
             Text(
               message,
               textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.outline),
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.outline,
+              ),
             ),
           ],
         ),

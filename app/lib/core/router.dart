@@ -14,6 +14,7 @@ import '../features/auth/sign_in_screen.dart';
 import '../features/dashboard/dashboard_screen.dart';
 import '../features/fermentation/fermentation_screen.dart';
 import '../features/foodie/chat_screen.dart';
+import '../features/grocery/grocery_screen.dart';
 import '../features/home_care/filters_screen.dart';
 import '../features/home_care/home_care_screen.dart';
 import '../features/inventory/inventory_screen.dart';
@@ -78,6 +79,7 @@ final routerProvider = Provider<GoRouter>((ref) {
 Widget _destinationBody(AppDestination destination) => switch (destination.route) {
       '/home' => const DashboardScreen(),
       '/foodie' => const FoodieChatScreen(),
+      '/grocery' => const GroceryScreen(),
       '/inventory' => const InventoryScreen(),
       '/home-care' => const HomeCareScreen(),
       '/supplies' => const FiltersScreen(),

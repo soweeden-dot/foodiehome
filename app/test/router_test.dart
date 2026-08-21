@@ -13,8 +13,12 @@ import 'package:foodiehome/features/auth/household_gate_screen.dart';
 import 'package:foodiehome/features/auth/session.dart';
 import 'package:foodiehome/features/auth/sign_in_screen.dart';
 import 'package:foodiehome/features/dashboard/dashboard_screen.dart';
+import 'package:foodiehome/features/fermentation/fermentation_controller.dart';
 import 'package:foodiehome/features/foodie/chat_controller.dart';
 import 'package:foodiehome/features/foodie/chat_screen.dart';
+import 'package:foodiehome/features/grocery/grocery_controller.dart';
+import 'package:foodiehome/features/home_care/home_care_controller.dart';
+import 'package:foodiehome/features/inventory/inventory_controller.dart';
 
 import 'fakes.dart';
 
@@ -36,6 +40,12 @@ Future<void> _pumpApp(
         if (deviceStore != null) deviceStoreProvider.overrideWithValue(deviceStore),
         if (foodieGateway != null)
           foodieGatewayProvider.overrideWithValue(foodieGateway),
+        // The dashboard aggregates every domain controller on landing —
+        // give it fakes so it doesn't reach for a real Supabase client.
+        groceryGatewayProvider.overrideWithValue(FakeGroceryGateway()),
+        inventoryGatewayProvider.overrideWithValue(FakeInventoryGateway()),
+        homeCareGatewayProvider.overrideWithValue(FakeHomeCareGateway()),
+        fermentationGatewayProvider.overrideWithValue(FakeFermentationGateway()),
       ],
       child: const FoodieHomeApp(),
     ),

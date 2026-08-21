@@ -4,10 +4,12 @@ import 'package:foodiehome/core/kitchen_mode.dart';
 import 'package:foodiehome/data/auth_gateway.dart';
 import 'package:foodiehome/data/fermentation_gateway.dart';
 import 'package:foodiehome/data/foodie_gateway.dart';
+import 'package:foodiehome/data/grocery_gateway.dart';
 import 'package:foodiehome/data/home_care_gateway.dart';
 import 'package:foodiehome/data/household_gateway.dart';
 import 'package:foodiehome/data/inventory_gateway.dart';
 import 'package:foodiehome/domain/fermentation.dart';
+import 'package:foodiehome/domain/grocery.dart';
 import 'package:foodiehome/domain/home_care.dart';
 import 'package:foodiehome/domain/household.dart';
 import 'package:foodiehome/domain/inventory.dart';
@@ -530,5 +532,48 @@ class FakeFermentationGateway implements FermentationGateway {
       ));
     }
     return updated;
+  }
+}
+
+class FakeGroceryGateway implements GroceryGateway {
+  String listId = 'list-1';
+  String listName = 'Groceries';
+  final List<GroceryItem> items = [];
+  int idCounter = 0;
+  Object? failNextCall;
+
+  void _maybeThrow() {
+    final error = failNextCall;
+    if (error != null) {
+      failNextCall = null;
+      throw error;
+    }
+  }
+
+  @override
+  Future<GroceryListSnapshot> fetchGroceryList(String householdId) async {
+    _maybeThrow();
+    if (items.isEmpty && listId.isEmpty) return GroceryListSnapshot.empty;
+    return GroceryListSnapshot(listId: listId, listName: listName, items: List.of(items));
+  }
+
+  @override
+  Future<GroceryItem> addItem(
+    String householdId, {
+    required String name,
+    double? quantity,
+    String? unit,
+    String? notes,
+  }) async {
+    _maybeThrow();
+    final item = GroceryItem(
+      id: 'grocery-${++idCounter}',
+      name: name,
+      quantity: quantity,
+      unit: unit,
+      notes: notes,
+    );
+    items.add(item);
+    return item;
   }
 }

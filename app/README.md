@@ -58,9 +58,14 @@ lib/
                    starters (feeding log with computed hydration/ratio/
                    next-feed-due) and cacao batches (turn/observation
                    events), stage/status updates with automatic history
+    grocery/  minimal grocery list at "/grocery" — view + add only (no
+              checked-item write path yet); feeds the dashboard's Food
+              section and "Add grocery item" quick action
     shell/    production nav shell: phone bottom bar / tablet rail /
               Kitchen Mode chrome, destination list, route placeholders
-    dashboard/  Home route boundary (Stream 5 builds the real cards)
+    dashboard/  the Home Dashboard / Kitchen Command Center — three
+                responsive layouts (kitchen/tablet/phone) over one
+                deterministic, zero-AI aggregation (domain/dashboard.dart)
     settings/   device + household settings, incl. Kitchen Mode toggle
                 and the household member list
 ```
@@ -68,14 +73,20 @@ lib/
 Kitchen Device Mode is a **device-local** UI preference (SharedPreferences,
 key `device.kitchen_mode`) — never synced, never a household setting.
 Enabling it on one device cannot affect another. See ARCHITECTURE.md §4 for
-the full navigation/responsive/Kitchen Mode design.
+the full navigation/responsive/Kitchen Mode design. The dashboard reuses the
+same `resolveShellLayout` as `AppShell` so Kitchen Mode's presentation-only
+nature extends to it automatically.
 
 `domain/recurrence.dart` computes cleaning/filter due dates and rollover at
 read time (never stored) — the Dart half of the same algorithm as
 `supabase/functions/_shared/recurrence.ts` on the Foodie agent side.
 `domain/sourdough.dart` does the same for feeding hydration %/ratio/
 next-feed-due, mirroring `supabase/functions/_shared/sourdough.ts`.
+`domain/dashboard.dart` composes both (plus every other domain) into one
+pure aggregation with **zero model/AI calls** — see docs/DECISIONS.md's
+AI/cost architecture entry; this is intentional standing architecture, not
+an implementation gap.
 
-Feature screens beyond auth/shell/settings/inventory/home_care/fermentation
+Feature screens beyond auth/shell/settings/inventory/home_care/fermentation/grocery/dashboard
 are PROVISIONAL placeholders until their own stream lands (Recipes, Meal
 Plan).

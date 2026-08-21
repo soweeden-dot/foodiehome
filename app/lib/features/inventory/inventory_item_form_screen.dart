@@ -27,10 +27,12 @@ class InventoryItemFormScreen extends ConsumerStatefulWidget {
 class _InventoryItemFormScreenState
     extends ConsumerState<InventoryItemFormScreen> {
   late final _name = TextEditingController(text: widget.item?.name ?? '');
-  late final _location =
-      TextEditingController(text: widget.item?.locationName ?? '');
+  late final _location = TextEditingController(
+    text: widget.item?.locationName ?? '',
+  );
   late final _quantity = TextEditingController(
-      text: widget.item?.quantity?.toString() ?? '');
+    text: widget.item?.quantity?.toString() ?? '',
+  );
   late final _unit = TextEditingController(text: widget.item?.unit ?? '');
   late final _notes = TextEditingController(text: widget.item?.notes ?? '');
   SupplyLevel? _level;
@@ -106,8 +108,9 @@ class _InventoryItemFormScreenState
         }
         await controller.addItem(
           name: _name.text.trim(),
-          locationName:
-              _location.text.trim().isEmpty ? null : _location.text.trim(),
+          locationName: _location.text.trim().isEmpty
+              ? null
+              : _location.text.trim(),
           quantity: quantity,
           unit: _unit.text.trim().isEmpty ? null : _unit.text.trim(),
           level: _level,
@@ -168,9 +171,11 @@ class _InventoryItemFormScreenState
             Autocomplete<String>(
               optionsBuilder: (value) => widget.knownLocations
                   .map((l) => l.name)
-                  .where((name) => name
-                      .toLowerCase()
-                      .contains(value.text.trim().toLowerCase())),
+                  .where(
+                    (name) => name.toLowerCase().contains(
+                      value.text.trim().toLowerCase(),
+                    ),
+                  ),
               onSelected: (selection) => _location.text = selection,
               fieldViewBuilder: (context, controller, focusNode, onSubmit) {
                 controller.text = _location.text;
@@ -191,8 +196,9 @@ class _InventoryItemFormScreenState
               Expanded(
                 child: TextField(
                   controller: _quantity,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   decoration: const InputDecoration(
                     labelText: 'Quantity',
                     helperText: 'Leave blank to keep unchanged',
@@ -210,6 +216,7 @@ class _InventoryItemFormScreenState
           ),
           const SizedBox(height: 12),
           DropdownButtonFormField<SupplyLevel?>(
+            isExpanded: true,
             initialValue: _level,
             decoration: const InputDecoration(
               labelText: 'Approximate level',
@@ -227,9 +234,11 @@ class _InventoryItemFormScreenState
           ListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('Expires on'),
-            subtitle: Text(_expiresOn == null
-                ? 'Not set'
-                : '${_expiresOn!.year}-${_expiresOn!.month.toString().padLeft(2, '0')}-${_expiresOn!.day.toString().padLeft(2, '0')}'),
+            subtitle: Text(
+              _expiresOn == null
+                  ? 'Not set'
+                  : '${_expiresOn!.year}-${_expiresOn!.month.toString().padLeft(2, '0')}-${_expiresOn!.day.toString().padLeft(2, '0')}',
+            ),
             trailing: const Icon(Icons.calendar_today_outlined),
             onTap: _pickExpiry,
           ),
@@ -246,8 +255,10 @@ class _InventoryItemFormScreenState
           if (_error != null)
             Padding(
               padding: const EdgeInsets.only(bottom: 12),
-              child: Text(_error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              child: Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
             ),
           FilledButton(
             onPressed: _busy ? null : _submit,

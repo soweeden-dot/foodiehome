@@ -49,6 +49,23 @@ that knows the Anthropic wire format (model from `FOODIE_MODEL`, default
 the orchestrator, tools, context builder, and domain layer are untouched.
 Tests run the full pipeline against a scripted `FakeProvider`.
 
+**Standing constraint (decided 2026-08-08, see `docs/DECISIONS.md`): Foodie
+must not depend on paid Anthropic API credits as its default AI provider.**
+The plan is an optional AI bridge running on the user's own laptop, with
+every app remaining fully functional when that bridge is unavailable. This
+`ModelProvider` boundary is exactly the seam a future laptop-bridge provider
+plugs into — no orchestrator/tool/context change needed when it lands, only
+a new `ModelProvider` implementation, same as any other provider swap.
+Concretely, this means: deterministic Foodie features (dashboard, cleaning,
+inventory, fermentation, etc.) must never require an AI call — they don't,
+today, by construction (see `domain/dashboard.dart`'s header); the model
+provider stays swappable, never hard-coded to Anthropic as the permanent
+choice; and `ANTHROPIC_API_KEY` is not deployed or activated anywhere (the
+live-infrastructure freeze already prevents this, but it's also the right
+call once the freeze eventually lifts). The laptop bridge itself is not
+implemented yet — this is an architecture decision recorded ahead of that
+work, not a build.
+
 ## Context assembly
 
 The model receives ONLY (`context.ts`):
