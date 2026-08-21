@@ -58,6 +58,7 @@ export type ErrorCode =
   | "unknown_tool"
   | "invalid_argument"
   | "not_authorized"
+  | "not_found"
   | "internal";
 
 export class FoodieError extends Error {
@@ -103,6 +104,53 @@ export interface HistoryMessage {
   content: string;
 }
 
+export type SupplyLevel = "full" | "good" | "low" | "almost_empty" | "out";
+
+export interface InventoryLocationView {
+  id: string;
+  name: string;
+  kind: string;
+}
+
+export interface InventoryItemView {
+  id: string;
+  name: string;
+  locationName: string | null;
+  quantity: number | null;
+  unit: string | null;
+  level: SupplyLevel | null;
+  expiresOn: string | null;
+  openedOn: string | null;
+  notes: string | null;
+}
+
+export interface InventoryView {
+  locations: InventoryLocationView[];
+  items: InventoryItemView[];
+}
+
+export interface NewInventoryItem {
+  name: string;
+  locationName?: string;
+  quantity?: number;
+  unit?: string;
+  level?: SupplyLevel;
+  expiresOn?: string;
+  notes?: string;
+}
+
+/** Every field is "leave unchanged if omitted" — see foodie_update_inventory_item
+ * in migration 14 and docs/FOODIE.md for why this call can't explicitly
+ * clear a previously-set field back to null. */
+export interface InventoryItemPatch {
+  quantity?: number;
+  unit?: string;
+  level?: SupplyLevel;
+  expiresOn?: string;
+  openedOn?: string;
+  notes?: string;
+}
+
 export type ActionStatus = "executed" | "failed";
 
 /** Intent-level audit entry (maps to the agent_actions table). */
@@ -141,6 +189,15 @@ export interface FoodieDb {
     householdId: string,
     item: { name: string; quantity?: number; unit?: string; notes?: string },
   ): Promise<GroceryItemView>;
+
+  getInventory(householdId: string): Promise<InventoryView>;
+  addInventoryItem(householdId: string, item: NewInventoryItem): Promise<InventoryItemView>;
+  updateInventoryItem(
+    householdId: string,
+    itemId: string,
+    patch: InventoryItemPatch,
+  ): Promise<InventoryItemView>;
+  removeInventoryItem(householdId: string, itemId: string): Promise<InventoryItemView>;
 
   getOrCreateConversation(
     householdId: string,

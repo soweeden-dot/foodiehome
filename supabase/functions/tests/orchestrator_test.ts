@@ -201,3 +201,107 @@ Deno.test("runaway tool loop stops at the iteration cap and says so", async () =
   assertEquals(provider.requests.length, 5);
   assert(reply.text.includes("action limit"));
 });
+
+Deno.test("add_inventory_item executes, auto-creates the location, and is audited", async () => {
+  const db = new FakeDb();
+  const provider = new FakeProvider([
+    {
+      text: "",
+      toolCalls: [{
+        id: "t1",
+        name: "add_inventory_item",
+        input: { name: "Milk", location: "Fridge", quantity: 1, unit: "l" },
+      }],
+    },
+    { text: "Added milk to the fridge.", toolCalls: [] },
+  ]);
+
+  const reply = await runFoodieTurn({ db, provider }, turnInput("add milk to the fridge"));
+
+  assertEquals(db.inventoryItems.length, 1);
+  assertEquals(db.inventoryItems[0].name, "Milk");
+  assertEquals(db.inventoryLocations.map((l) => l.name), ["Fridge"]);
+  assertEquals(reply.actions, [
+    {
+      tool: "add_inventory_item",
+      status: "executed",
+      summary: 'Added "Milk" to inventory (Fridge)',
+    },
+  ]);
+  assertEquals(db.actions[0].status, "executed");
+});
+
+Deno.test(
+  "we used the last onion: remove_inventory_item soft-deletes and is audited",
+  async () => {
+    const db = new FakeDb();
+    db.inventoryItems.push({
+      id: "inv-1",
+      name: "Onion",
+      locationName: "Pantry",
+      quantity: null,
+      unit: null,
+      level: "out",
+      expiresOn: null,
+      openedOn: null,
+      notes: null,
+      deleted: false,
+    });
+    const provider = new FakeProvider([
+      { text: "", toolCalls: [{ id: "t1", name: "remove_inventory_item", input: { item_id: "inv-1" } }] },
+      { text: "Removed the onion.", toolCalls: [] },
+    ]);
+
+    const reply = await runFoodieTurn({ db, provider }, turnInput("we used the last onion"));
+
+    assertEquals(db.inventoryItems[0].deleted, true);
+    assertEquals(reply.actions, [
+      { tool: "remove_inventory_item", status: "executed", summary: 'Removed "Onion" from inventory' },
+    ]);
+  },
+);
+
+Deno.test("update_inventory_item on an unknown id fails cleanly, nothing invented", async () => {
+  const db = new FakeDb();
+  const provider = new FakeProvider([
+    {
+      text: "",
+      toolCalls: [{ id: "t1", name: "update_inventory_item", input: { item_id: "missing", quantity: 1 } }],
+    },
+    { text: "Done!", toolCalls: [] }, // model lies
+  ]);
+
+  const reply = await runFoodieTurn({ db, provider }, turnInput("update the missing item"));
+
+  assertEquals(reply.actions, [
+    { tool: "update_inventory_item", status: "failed", summary: "Failed: inventory item not found" },
+  ]);
+  assertEquals(db.actions[0].status, "failed");
+});
+
+Deno.test("get_inventory is a read tool: no action entry, no audit noise in actions[]", async () => {
+  const db = new FakeDb();
+  db.inventoryItems.push({
+    id: "inv-1",
+    name: "Rice",
+    locationName: null,
+    quantity: 2,
+    unit: "kg",
+    level: null,
+    expiresOn: null,
+    openedOn: null,
+    notes: null,
+    deleted: false,
+  });
+  const provider = new FakeProvider([
+    { text: "", toolCalls: [{ id: "t1", name: "get_inventory", input: {} }] },
+    { text: "You have 2kg of rice.", toolCalls: [] },
+  ]);
+
+  const reply = await runFoodieTurn({ db, provider }, turnInput("what's in the pantry?"));
+
+  assertEquals(reply.actions, []);
+  const toolResults = provider.requests[1].messages.at(-1)!;
+  assert(toolResults.role === "tool_results");
+  assertEquals(toolResults.results[0].ok, true);
+});

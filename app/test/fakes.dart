@@ -4,7 +4,9 @@ import 'package:foodiehome/core/kitchen_mode.dart';
 import 'package:foodiehome/data/auth_gateway.dart';
 import 'package:foodiehome/data/foodie_gateway.dart';
 import 'package:foodiehome/data/household_gateway.dart';
+import 'package:foodiehome/data/inventory_gateway.dart';
 import 'package:foodiehome/domain/household.dart';
+import 'package:foodiehome/domain/inventory.dart';
 
 class FakeAuthGateway implements AuthGateway {
   // Not an async* generator: listeners must be registered synchronously so an
@@ -108,6 +110,14 @@ class FakeHouseholdGateway implements HouseholdGateway {
 
   @override
   Future<String> regenerateInviteCode(String householdId) async => 'newcode';
+
+  List<HouseholdMember> members = const [
+    HouseholdMember(displayName: 'Alice', isAdmin: true),
+  ];
+
+  @override
+  Future<List<HouseholdMember>> fetchMembers(String householdId) async =>
+      List.of(members);
 }
 
 /// In-memory stand-in for one device's local storage. Two separate
@@ -143,5 +153,103 @@ class FakeFoodieGateway implements FoodieGateway {
           conversationId: 'conv-fake', text: 'Hi!', actions: []);
     }
     return _replies.removeAt(0);
+  }
+}
+
+class FakeInventoryGateway implements InventoryGateway {
+  final List<InventoryLocation> locations = [];
+  final List<InventoryItem> items = [];
+  int idCounter = 0;
+  Object? failNextCall;
+
+  void _maybeThrow() {
+    final error = failNextCall;
+    if (error != null) {
+      failNextCall = null;
+      throw error;
+    }
+  }
+
+  String _resolveLocation(String? name) {
+    if (name == null || name.trim().isEmpty) return '';
+    final trimmed = name.trim();
+    final existing = locations.where(
+        (l) => l.name.toLowerCase() == trimmed.toLowerCase());
+    if (existing.isNotEmpty) return existing.first.name;
+    locations.add(InventoryLocation(
+        id: 'loc-${locations.length + 1}', name: trimmed, kind: 'other'));
+    return trimmed;
+  }
+
+  @override
+  Future<InventorySnapshot> fetchInventory(String householdId) async {
+    _maybeThrow();
+    return InventorySnapshot(locations: List.of(locations), items: List.of(items));
+  }
+
+  @override
+  Future<InventoryItem> addItem(
+    String householdId, {
+    required String name,
+    String? locationName,
+    double? quantity,
+    String? unit,
+    SupplyLevel? level,
+    DateTime? expiresOn,
+    String? notes,
+  }) async {
+    _maybeThrow();
+    final resolvedLocation =
+        locationName == null ? null : _resolveLocation(locationName);
+    final item = InventoryItem(
+      id: 'inv-${++idCounter}',
+      name: name,
+      locationName: resolvedLocation,
+      quantity: quantity,
+      unit: unit,
+      level: level,
+      expiresOn: expiresOn,
+      notes: notes,
+    );
+    items.add(item);
+    return item;
+  }
+
+  @override
+  Future<InventoryItem> updateItem(
+    String householdId,
+    String itemId, {
+    double? quantity,
+    String? unit,
+    SupplyLevel? level,
+    DateTime? expiresOn,
+    DateTime? openedOn,
+    String? notes,
+  }) async {
+    _maybeThrow();
+    final index = items.indexWhere((i) => i.id == itemId);
+    if (index == -1) {
+      throw StateError('inventory item not found');
+    }
+    final updated = items[index].copyWith(
+      quantity: quantity,
+      unit: unit,
+      level: level,
+      expiresOn: expiresOn,
+      openedOn: openedOn,
+      notes: notes,
+    );
+    items[index] = updated;
+    return updated;
+  }
+
+  @override
+  Future<void> removeItem(String householdId, String itemId) async {
+    _maybeThrow();
+    final removed = items.any((i) => i.id == itemId);
+    if (!removed) {
+      throw StateError('inventory item not found');
+    }
+    items.removeWhere((i) => i.id == itemId);
   }
 }

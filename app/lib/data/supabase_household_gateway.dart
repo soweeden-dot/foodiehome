@@ -61,4 +61,21 @@ class SupabaseHouseholdGateway implements HouseholdGateway {
     );
     return result as String;
   }
+
+  @override
+  Future<List<HouseholdMember>> fetchMembers(String householdId) async {
+    final rows = await _client
+        .from('household_members')
+        .select('role, profiles(display_name)')
+        .eq('household_id', householdId);
+    return rows.map((row) {
+      final profile = row['profiles'] as Map<String, dynamic>?;
+      return HouseholdMember(
+        displayName: (profile?['display_name'] as String?)?.trim().isNotEmpty == true
+            ? profile!['display_name'] as String
+            : '(unnamed)',
+        isAdmin: row['role'] == 'admin',
+      );
+    }).toList();
+  }
 }

@@ -28,8 +28,13 @@ import {
   type GroceryItemView,
   type GroceryListView,
   type HistoryMessage,
+  type InventoryItemPatch,
+  type InventoryItemView,
+  type InventoryView,
+  type InventoryLocationView,
   type MemoryCategory,
   type MemoryView,
+  type NewInventoryItem,
 } from "./types.ts";
 
 // supabase-js's SupabaseClient type is generic over the active schema
@@ -53,6 +58,8 @@ function mapDbError(error: PgError, fallback: string): FoodieError {
       return new FoodieError("not_authorized", "not a member of that household");
     case "P0007":
       return new FoodieError("invalid_argument", error.message ?? "invalid argument");
+    case "P0008":
+      return new FoodieError("not_found", error.message ?? "not found");
     default:
       console.error("database error:", error.code, error.message);
       return new FoodieError("internal", fallback);
@@ -187,6 +194,128 @@ export class SupabaseFoodieDb implements FoodieDb {
       checked: false,
       notes: data.notes as string | null,
     };
+  }
+
+  async getInventory(householdId: string): Promise<InventoryView> {
+    const [locationsResult, itemsResult] = await Promise.all([
+      this.userClient
+        .from("inventory_locations")
+        .select("id, name, kind")
+        .eq("household_id", householdId)
+        .is("deleted_at", null)
+        .order("position"),
+      this.userClient
+        .from("inventory_items")
+        .select("id, name, quantity, unit, level, expires_on, opened_on, notes, inventory_locations(name)")
+        .eq("household_id", householdId)
+        .is("deleted_at", null)
+        .order("created_at"),
+    ]);
+    if (locationsResult.error) {
+      throw mapDbError(locationsResult.error, "could not load inventory locations");
+    }
+    if (itemsResult.error) {
+      throw mapDbError(itemsResult.error, "could not load inventory items");
+    }
+    return {
+      locations: (locationsResult.data ?? []).map((row): InventoryLocationView => ({
+        id: row.id as string,
+        name: row.name as string,
+        kind: row.kind as string,
+      })),
+      items: (itemsResult.data ?? []).map((row): InventoryItemView => ({
+        id: row.id as string,
+        name: (row.name as string | null) ?? "(unnamed)",
+        locationName: (row.inventory_locations as { name?: string } | null)?.name ?? null,
+        quantity: row.quantity === null ? null : Number(row.quantity),
+        unit: row.unit as string | null,
+        level: row.level as InventoryItemView["level"],
+        expiresOn: row.expires_on as string | null,
+        openedOn: row.opened_on as string | null,
+        notes: row.notes as string | null,
+      })),
+    };
+  }
+
+  private static inventoryItemFromRow(
+    row: Record<string, unknown>,
+    locationName: string | null,
+  ): InventoryItemView {
+    return {
+      id: row.id as string,
+      name: (row.name as string | null) ?? "(unnamed)",
+      locationName,
+      quantity: row.quantity === null ? null : Number(row.quantity as number | null),
+      unit: row.unit as string | null,
+      level: row.level as InventoryItemView["level"],
+      expiresOn: row.expires_on as string | null,
+      openedOn: row.opened_on as string | null,
+      notes: row.notes as string | null,
+    };
+  }
+
+  async addInventoryItem(
+    householdId: string,
+    item: NewInventoryItem,
+  ): Promise<InventoryItemView> {
+    const { data, error } = await this.userClient.rpc("foodie_add_inventory_item", {
+      p_household: householdId,
+      p_name: item.name,
+      p_location_name: item.locationName ?? null,
+      p_quantity: item.quantity ?? null,
+      p_unit: item.unit ?? null,
+      p_level: item.level ?? null,
+      p_expires_on: item.expiresOn ?? null,
+      p_notes: item.notes ?? null,
+    });
+    if (error) throw mapDbError(error, "could not add the inventory item");
+    // The RPC returns the raw row (location_id, not a resolved name); the
+    // caller supplied the location name, so echo it back directly rather
+    // than issuing a second round-trip to resolve it.
+    return SupabaseFoodieDb.inventoryItemFromRow(data, item.locationName ?? null);
+  }
+
+  async updateInventoryItem(
+    householdId: string,
+    itemId: string,
+    patch: InventoryItemPatch,
+  ): Promise<InventoryItemView> {
+    const { data, error } = await this.userClient.rpc("foodie_update_inventory_item", {
+      p_household: householdId,
+      p_item_id: itemId,
+      p_quantity: patch.quantity ?? null,
+      p_unit: patch.unit ?? null,
+      p_level: patch.level ?? null,
+      p_expires_on: patch.expiresOn ?? null,
+      p_opened_on: patch.openedOn ?? null,
+      p_notes: patch.notes ?? null,
+    });
+    if (error) throw mapDbError(error, "could not update the inventory item");
+    const locationName = data.location_id
+      ? await this.resolveLocationName(data.location_id as string)
+      : null;
+    return SupabaseFoodieDb.inventoryItemFromRow(data, locationName);
+  }
+
+  async removeInventoryItem(householdId: string, itemId: string): Promise<InventoryItemView> {
+    const { data, error } = await this.userClient.rpc("foodie_remove_inventory_item", {
+      p_household: householdId,
+      p_item_id: itemId,
+    });
+    if (error) throw mapDbError(error, "could not remove the inventory item");
+    const locationName = data.location_id
+      ? await this.resolveLocationName(data.location_id as string)
+      : null;
+    return SupabaseFoodieDb.inventoryItemFromRow(data, locationName);
+  }
+
+  private async resolveLocationName(locationId: string): Promise<string | null> {
+    const { data } = await this.userClient
+      .from("inventory_locations")
+      .select("name")
+      .eq("id", locationId)
+      .maybeSingle();
+    return (data?.name as string | undefined) ?? null;
   }
 
   async getOrCreateConversation(

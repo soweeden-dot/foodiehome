@@ -15,6 +15,7 @@ class SettingsScreen extends ConsumerWidget {
     final session = ref.watch(sessionProvider).value;
     final kitchenMode = ref.watch(kitchenModeProvider).value ?? false;
     final household = session is Ready ? session.household : null;
+    final members = ref.watch(householdMembersProvider).value ?? const [];
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -40,6 +41,18 @@ class SettingsScreen extends ConsumerWidget {
             ListTile(
               title: const Text('Invite code'),
               subtitle: SelectableText(household.inviteCode!),
+            ),
+          if (members.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8, bottom: 4),
+              child: Text('Members', style: Theme.of(context).textTheme.labelLarge),
+            ),
+          for (final member in members)
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.person_outline),
+              title: Text(member.displayName),
+              trailing: member.isAdmin ? const Chip(label: Text('Admin')) : null,
             ),
         ],
         const Divider(height: 32),

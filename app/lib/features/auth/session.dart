@@ -57,6 +57,14 @@ final sessionProvider = FutureProvider<SessionState>((ref) async {
   return Ready(userId, households.first);
 });
 
+/// The current household's roster (display name + role per member) — small,
+/// read-only membership UX (Settings). Re-resolves whenever the session does.
+final householdMembersProvider = FutureProvider<List<HouseholdMember>>((ref) async {
+  final session = await ref.watch(sessionProvider.future);
+  if (session is! Ready) return const [];
+  return ref.watch(householdGatewayProvider).fetchMembers(session.household.id);
+});
+
 /// Imperative auth/household actions used by the provisional screens.
 /// Mutations invalidate [sessionProvider] so the flow re-resolves.
 final sessionActionsProvider = Provider<SessionActions>(SessionActions.new);

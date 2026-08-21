@@ -48,10 +48,13 @@ lib/
   features/
     auth/     sign-in/sign-up, household create/join (Stream 2)
     foodie/   chat controller + provisional chat screen (Stream 3)
+    inventory/  household inventory: list/search/filter, add/edit/remove,
+                approximate-level + quantity+unit + expiry tracking
     shell/    production nav shell: phone bottom bar / tablet rail /
               Kitchen Mode chrome, destination list, route placeholders
     dashboard/  Home route boundary (Stream 5 builds the real cards)
     settings/   device + household settings, incl. Kitchen Mode toggle
+                and the household member list
 ```
 
 Kitchen Device Mode is a **device-local** UI preference (SharedPreferences,

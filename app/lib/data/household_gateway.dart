@@ -15,4 +15,7 @@ abstract interface class HouseholdGateway {
 
   /// Admins only (enforced server-side). Returns the new code.
   Future<String> regenerateInviteCode(String householdId);
+
+  /// The household roster — display name + role for every member.
+  Future<List<HouseholdMember>> fetchMembers(String householdId);
 }

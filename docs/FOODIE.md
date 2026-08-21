@@ -92,7 +92,7 @@ Each tool = spec (JSON Schema shown to the model) + `mutating` flag +
 Mutating tool outcomes surface to the client in `actions[]`; read tools are
 audited but not shown as user-visible actions.
 
-## Stream 3 tool set (complete list)
+## Tool set (complete list)
 
 | Tool | Kind | Backing |
 |---|---|---|
@@ -101,10 +101,16 @@ audited but not shown as user-visible actions.
 | `save_household_preference` | mutate | `foodie_save_memory` RPC |
 | `get_grocery_list` | read | grocery lists/items (RLS) |
 | `add_grocery_item` | mutate | `foodie_add_grocery_item` RPC (creates the default list on first use) |
+| `get_inventory` | read | inventory locations/items (RLS) |
+| `add_inventory_item` | mutate | `foodie_add_inventory_item` RPC (creates the named location on first use) |
+| `update_inventory_item` | mutate | `foodie_update_inventory_item` RPC — omitted fields are left unchanged; this call cannot explicitly clear a previously-set field back to empty (a documented scope limit, not a bug — see migration 14) |
+| `remove_inventory_item` | mutate | `foodie_remove_inventory_item` RPC — soft-deletes (`deleted_at`); a separate tool from `update_inventory_item` rather than a "removed" flag on it, since removal ("we used the last onion") is a distinct action from an ordinary field edit and deserves its own clear audit-trail entry |
 
-Grocery writes were judged safe to include: the Stream 1 schema is complete
-for lists/items, the write path is a single validated insert through an RPC,
-and the failure modes are benign.
+Grocery and inventory writes were judged safe to include: the schema is
+complete for both, each write path is a single validated call through an
+RPC, and the failure modes are benign. `food_items` catalog CRUD (aliases,
+default shelf life, recipe linking) is deliberately out of scope — inventory
+items use free-text names for now, exactly like grocery items already do.
 
 ## Multi-agent compatibility (not implemented)
 
@@ -115,16 +121,18 @@ Foodie owns no scheduling and no cross-agent channel exists.
 
 ## Deferred (later streams)
 
-Domain tools (meal planning, cleaning, fermentation, filters, recipes,
-camera), proposed-action confirmation flow (`agent_actions.status='proposed'`
-exists but Stream 3 records post-hoc `executed`/`failed` only), undo,
-memory-management UI, household-fact/historical memory population, response
-streaming, chat history loading in the client (the screen shows the live
-session; persistence already works server-side), rate limiting, voice, the
-unified morning brief.
+Domain tools beyond grocery/inventory (meal planning, cleaning, fermentation,
+filters, recipes, camera), proposed-action confirmation flow
+(`agent_actions.status='proposed'` exists but is recorded post-hoc
+`executed`/`failed` only), undo, memory-management UI, household-fact/
+historical memory population, response streaming, chat history loading in
+the client (the screen shows the live session; persistence already works
+server-side), rate limiting, voice, the unified morning brief, explicit
+field-clearing on `update_inventory_item` (a "clear" affordance for
+expiry/opened dates and notes, deferred — see the tool table above).
 
 ## Testing
 
-- `supabase/functions/tests/` (Deno, no network): orchestrator loop, handler auth/validation, tool validation — 22 tests including the "model cannot invent success" and "history ≠ memory" properties.
-- `supabase/tests/foodie_test.sql`: RPC validation codes, foodie provenance in `record_history`, membership rejection, audit append-only, conversation/memory separation.
+- `supabase/functions/tests/` (Deno, no network): orchestrator loop, handler auth/validation, tool validation — 29 tests including the "model cannot invent success", "history ≠ memory", and inventory-specific ("we used the last onion" removal, unknown-id update fails cleanly) properties.
+- `supabase/tests/foodie_test.sql` and `supabase/tests/inventory_test.sql`: RPC validation codes, foodie provenance in `record_history`, membership rejection, audit append-only, conversation/memory separation, location auto-create-and-reuse, partial-update semantics.
 - `app/test/chat_controller_test.dart`: reply/action rendering from server truth, structured error surfacing, conversation continuity.

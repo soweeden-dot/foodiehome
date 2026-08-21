@@ -34,3 +34,21 @@ class Household {
 /// (whitespace, case) before sending. Server-side redemption normalizes too —
 /// this is UX, not enforcement.
 String normalizeInviteCode(String raw) => raw.trim().toLowerCase();
+
+/// One row of the household roster — display name + role. Membership UX
+/// only; management (invite/remove) stays out of scope for now.
+class HouseholdMember {
+  const HouseholdMember({required this.displayName, required this.isAdmin});
+
+  final String displayName;
+  final bool isAdmin;
+
+  @override
+  bool operator ==(Object other) =>
+      other is HouseholdMember &&
+      other.displayName == displayName &&
+      other.isAdmin == isAdmin;
+
+  @override
+  int get hashCode => Object.hash(displayName, isAdmin);
+}

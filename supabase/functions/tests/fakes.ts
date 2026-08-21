@@ -9,9 +9,14 @@ import type {
   GroceryItemView,
   GroceryListView,
   HistoryMessage,
+  InventoryItemPatch,
+  InventoryItemView,
+  InventoryLocationView,
+  InventoryView,
   MemoryCategory,
   MemoryView,
   ModelProvider,
+  NewInventoryItem,
   ProviderRequest,
   ProviderTurn,
 } from "../_shared/types.ts";
@@ -31,7 +36,13 @@ export class FakeDb implements FoodieDb {
   > }>();
   actions: AgentActionRecord[] = [];
   failNextGroceryAdd: FoodieError | null = null;
+  failNextInventoryAdd: FoodieError | null = null;
+  inventoryLocations: InventoryLocationView[] = [];
+  // deleted items stay in the array with deleted=true, mirroring the real
+  // soft-delete schema, and are filtered out of getInventory/lookups.
+  inventoryItems: Array<InventoryItemView & { deleted: boolean }> = [];
   private conversationCounter = 0;
+  private inventoryCounter = 0;
 
   getMembership(): Promise<{ householdId: string } | null> {
     return Promise.resolve(this.membership);
@@ -90,6 +101,80 @@ export class FakeDb implements FoodieDb {
     };
     this.groceryItems.push(view);
     return Promise.resolve(view);
+  }
+
+  getInventory(_householdId: string): Promise<InventoryView> {
+    return Promise.resolve({
+      locations: [...this.inventoryLocations],
+      items: this.inventoryItems.filter((i) => !i.deleted).map(({ deleted: _d, ...view }) => view),
+    });
+  }
+
+  private resolveOrCreateLocation(name: string | undefined): string | null {
+    if (!name || name.trim().length === 0) return null;
+    const trimmed = name.trim();
+    const existing = this.inventoryLocations.find(
+      (l) => l.name.toLowerCase() === trimmed.toLowerCase(),
+    );
+    if (existing) return existing.name;
+    this.inventoryLocations.push({ id: `loc-${this.inventoryLocations.length + 1}`, name: trimmed, kind: "other" });
+    return trimmed;
+  }
+
+  addInventoryItem(
+    _householdId: string,
+    item: NewInventoryItem,
+  ): Promise<InventoryItemView> {
+    if (this.failNextInventoryAdd) {
+      const error = this.failNextInventoryAdd;
+      this.failNextInventoryAdd = null;
+      return Promise.reject(error);
+    }
+    const locationName = this.resolveOrCreateLocation(item.locationName);
+    const view: InventoryItemView & { deleted: boolean } = {
+      id: `inv-${++this.inventoryCounter}`,
+      name: item.name,
+      locationName,
+      quantity: item.quantity ?? null,
+      unit: item.unit ?? null,
+      level: item.level ?? null,
+      expiresOn: item.expiresOn ?? null,
+      openedOn: null,
+      notes: item.notes ?? null,
+      deleted: false,
+    };
+    this.inventoryItems.push(view);
+    const { deleted: _d, ...result } = view;
+    return Promise.resolve(result);
+  }
+
+  updateInventoryItem(
+    _householdId: string,
+    itemId: string,
+    patch: InventoryItemPatch,
+  ): Promise<InventoryItemView> {
+    const item = this.inventoryItems.find((i) => i.id === itemId && !i.deleted);
+    if (!item) {
+      return Promise.reject(new FoodieError("not_found", "inventory item not found"));
+    }
+    if (patch.quantity !== undefined) item.quantity = patch.quantity;
+    if (patch.unit !== undefined) item.unit = patch.unit;
+    if (patch.level !== undefined) item.level = patch.level;
+    if (patch.expiresOn !== undefined) item.expiresOn = patch.expiresOn;
+    if (patch.openedOn !== undefined) item.openedOn = patch.openedOn;
+    if (patch.notes !== undefined) item.notes = patch.notes;
+    const { deleted: _d, ...result } = item;
+    return Promise.resolve(result);
+  }
+
+  removeInventoryItem(_householdId: string, itemId: string): Promise<InventoryItemView> {
+    const item = this.inventoryItems.find((i) => i.id === itemId && !i.deleted);
+    if (!item) {
+      return Promise.reject(new FoodieError("not_found", "inventory item not found"));
+    }
+    item.deleted = true;
+    const { deleted: _d, ...result } = item;
+    return Promise.resolve(result);
   }
 
   getOrCreateConversation(

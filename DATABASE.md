@@ -1,7 +1,7 @@
 # FoodieHome — Database Design (Streams 1–3 + schema isolation)
 
 **Status:** Stream 1 core schema + Stream 2 membership/provenance + Stream 3 Foodie core, rewritten into a dedicated `foodie` Postgres schema ahead of shared-project deployment.
-**Migrations:** `supabase/migrations/` (13 files, applied in filename order). Schema changes happen **only** through new migration files — never by editing applied migrations, never through the Supabase dashboard. **Nothing has been applied to a real project yet** — these migrations were rewritten in place (not versioned as a new migration) precisely because nothing live exists to preserve.
+**Migrations:** `supabase/migrations/` (14 files, applied in filename order). Schema changes happen **only** through new migration files — never by editing applied migrations, never through the Supabase dashboard. **Nothing has been applied to a real project yet.**
 
 All 33 tables were validated against a real Postgres 16 instance (migrations apply cleanly; RLS member/outsider behavior, membership RPCs, audit triggers, and — critically — coexistence with a simulated pre-existing app in `public` are all exercised by the test suite — see `supabase/tests/` and §0 below).
 
@@ -192,6 +192,17 @@ Storage only in Stream 1 — no agent code, no tools. `agent_actions` is written
 
 These RPCs are the **only** write paths the agent tool executor uses (see `docs/FOODIE.md`). Conversation storage (`agent_conversations`/`agent_messages`) is unchanged and deliberately unlinked from `memories` — chat is not memory.
 
+### Inventory RPCs (`20260808230000_foodie_inventory_rpcs.sql`) — Household Inventory phase
+
+No table changes — `inventory_locations`, `food_items`, and `inventory_items` are exactly as designed in migration 04. Three write paths, same SECURITY INVOKER + validated + `app.action_source='foodie'` pattern as migration 13:
+
+| Function | Purpose |
+|---|---|
+| `resolve_inventory_location(household, name)` | Internal helper: case-insensitive find-or-create of a location by name. Households aren't required to pre-provision Pantry/Fridge/Freezer rows. |
+| `foodie_add_inventory_item(...)` | Validates name/quantity, resolves (or creates) the named location, inserts with `entry_source='agent'`. |
+| `foodie_update_inventory_item(...)` | Partial update via `COALESCE` — **an omitted parameter means "leave unchanged," not "clear it."** This RPC cannot explicitly null out a previously-set field in this phase; a dedicated clear affordance is deferred. Raises `P0008` (`not found`, a new error code) if the item doesn't exist or belongs to a different household. |
+| `foodie_remove_inventory_item(...)` | Soft-deletes (`deleted_at = now()`), same `P0008` on a missing item. A distinct function/tool from update, not a flag on it — see `docs/FOODIE.md` for the reasoning. |
+
 ## 4. Relationship map (condensed)
 
 ```
@@ -294,10 +305,11 @@ Exceptions to the standard policy:
 - `smoke_test.sql` — profile auto-creation, creator-becomes-admin, member read/write access, outsider denial (households/inventory/audit all empty for non-members), append-only enforcement on `record_history`, audit diff correctness, scheduled-reminder CHECK constraint, notification dedupe uniqueness, and every `foodie` table has RLS enabled.
 - `membership_test.sql` — invite redemption/rotation, leave, last-admin protection, provenance on direct vs. RPC-driven edits.
 - `foodie_test.sql` — memory RPCs, grocery RPC, household-scope rejection, conversation/memory separation, agent-audit append-only enforcement.
+- `inventory_test.sql` — location auto-create and case-insensitive reuse, argument validation, partial-update (`COALESCE`) semantics, `P0008` not-found on update/double-remove, household-scope rejection.
 
 **`foodie_coexistence_test`** — proves the schema-isolation guarantee concretely, not just by inspection:
 - `keep_track_stub.sql` — simulates Keep Track's pre-existing `public` footprint (a `profiles` table, a `set_updated_at()` function, and an `auth.users` provisioning trigger — the two collision candidates identified during design, plus the standard shared-table pattern), applied **before** any Foodie migration.
-- `coexistence_test.sql` — applied after all 13 Foodie migrations; asserts Keep Track's simulated table/function are byte-for-byte unchanged (including the function *body*, not just its existence — `CREATE OR REPLACE FUNCTION` overwrites silently with no error, so existence alone wouldn't catch that failure mode), both `auth.users` triggers fire independently on a real signup, no Foodie table or function exists anywhere under `public`, and all 33 expected tables exist in `foodie`.
+- `coexistence_test.sql` — applied after all 14 Foodie migrations; asserts Keep Track's simulated table/function are byte-for-byte unchanged (including the function *body*, not just its existence — `CREATE OR REPLACE FUNCTION` overwrites silently with no error, so existence alone wouldn't catch that failure mode), both `auth.users` triggers fire independently on a real signup, no Foodie table or function exists anywhere under `public`, and all 33 expected tables exist in `foodie`.
 
 Kept in separate databases because `coexistence_test.sql`'s extra signup would otherwise throw off the exact user/profile counts the functional tests assert.
 

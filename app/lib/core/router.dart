@@ -13,6 +13,7 @@ import '../features/auth/session.dart';
 import '../features/auth/sign_in_screen.dart';
 import '../features/dashboard/dashboard_screen.dart';
 import '../features/foodie/chat_screen.dart';
+import '../features/inventory/inventory_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/shell/app_shell.dart';
 import '../features/shell/destinations.dart';
@@ -74,6 +75,7 @@ final routerProvider = Provider<GoRouter>((ref) {
 Widget _destinationBody(AppDestination destination) => switch (destination.route) {
       '/home' => const DashboardScreen(),
       '/foodie' => const FoodieChatScreen(),
+      '/inventory' => const InventoryScreen(),
       '/settings' => const SettingsScreen(),
       _ => PlaceholderScreen(title: destination.label, icon: destination.icon),
     };
