@@ -429,6 +429,165 @@ Deno.test("report then resolve a maintenance issue", async () => {
   ]);
 });
 
+Deno.test("log_sourdough_feeding executes and is audited", async () => {
+  const db = new FakeDb();
+  db.fermentationProjects.push({
+    id: "proj-1",
+    projectType: "sourdough_starter",
+    name: "Rustic Rye",
+    status: "active",
+    startedAt: "2026-08-01T00:00:00.000Z",
+    endedAt: null,
+    currentStage: null,
+    targetParams: { state: "active", feed_interval_hours: 24 },
+    nextCheckAt: null,
+    notes: null,
+    deleted: false,
+  });
+  const provider = new FakeProvider([
+    {
+      text: "",
+      toolCalls: [{
+        id: "t1",
+        name: "log_sourdough_feeding",
+        input: { project_id: "proj-1", starter_g: 10, flour_g: 50, water_g: 50, flour_type: "rye" },
+      }],
+    },
+    { text: "Logged the feeding.", toolCalls: [] },
+  ]);
+
+  const reply = await runFoodieTurn({ db, provider }, turnInput("fed the rye starter"));
+
+  assertEquals(db.fermentationLogs.length, 1);
+  assertEquals(db.fermentationLogs[0].logType, "feeding");
+  assertEquals(reply.actions, [
+    { tool: "log_sourdough_feeding", status: "executed", summary: "Logged a sourdough feeding" },
+  ]);
+  assertEquals(db.actions[0].status, "executed");
+});
+
+Deno.test("log_fermentation_event on a missing project fails cleanly, nothing invented", async () => {
+  const db = new FakeDb();
+  const provider = new FakeProvider([
+    {
+      text: "",
+      toolCalls: [{
+        id: "t1",
+        name: "log_fermentation_event",
+        input: { project_id: "missing", log_type: "turning" },
+      }],
+    },
+    { text: "Done!", toolCalls: [] }, // model lies
+  ]);
+
+  const reply = await runFoodieTurn({ db, provider }, turnInput("log a turn on the missing batch"));
+
+  assertEquals(db.fermentationLogs.length, 0);
+  assertEquals(reply.actions, [
+    {
+      tool: "log_fermentation_event",
+      status: "failed",
+      summary: "Failed: fermentation project not found",
+    },
+  ]);
+});
+
+Deno.test(
+  "update_fermentation_stage records a stage_change log and archives on completion",
+  async () => {
+    const db = new FakeDb();
+    db.fermentationProjects.push({
+      id: "proj-1",
+      projectType: "cacao",
+      name: "Backyard Cacao Batch 1",
+      status: "active",
+      startedAt: "2026-08-01T00:00:00.000Z",
+      endedAt: null,
+      currentStage: "fermenting",
+      targetParams: null,
+      nextCheckAt: null,
+      notes: null,
+      deleted: false,
+    });
+    const provider = new FakeProvider([
+      {
+        text: "",
+        toolCalls: [{
+          id: "t1",
+          name: "update_fermentation_stage",
+          input: { project_id: "proj-1", current_stage: "drying", status: "active" },
+        }],
+      },
+      { text: "Moved the batch to drying.", toolCalls: [] },
+    ]);
+
+    await runFoodieTurn({ db, provider }, turnInput("move the cacao to drying"));
+
+    assertEquals(db.fermentationProjects[0].currentStage, "drying");
+    assertEquals(
+      db.fermentationLogs.filter((l) => l.logType === "stage_change").length,
+      1,
+    );
+
+    const provider2 = new FakeProvider([
+      {
+        text: "",
+        toolCalls: [{
+          id: "t2",
+          name: "update_fermentation_stage",
+          input: { project_id: "proj-1", status: "completed" },
+        }],
+      },
+      { text: "Marked the batch complete.", toolCalls: [] },
+    ]);
+    await runFoodieTurn({ db, provider: provider2 }, turnInput("the cacao batch is done"));
+
+    assertEquals(db.fermentationProjects[0].status, "completed");
+    assert(db.fermentationProjects[0].endedAt !== null);
+  },
+);
+
+Deno.test("get_fermentation_project returns full log history for one project", async () => {
+  const db = new FakeDb();
+  db.fermentationProjects.push({
+    id: "proj-1",
+    projectType: "sourdough_starter",
+    name: "Rustic Rye",
+    status: "active",
+    startedAt: "2026-08-01T00:00:00.000Z",
+    endedAt: null,
+    currentStage: null,
+    targetParams: null,
+    nextCheckAt: null,
+    notes: null,
+    deleted: false,
+  });
+  db.fermentationLogs.push({
+    id: "ferm-log-1",
+    projectId: "proj-1",
+    loggedAt: "2026-08-10T09:00:00.000Z",
+    logType: "feeding",
+    payload: { starterG: 10, flourG: 50, waterG: 50 },
+    notes: null,
+    author: "foodie",
+  });
+  const provider = new FakeProvider([
+    { text: "", toolCalls: [{ id: "t1", name: "get_fermentation_project", input: { project_id: "proj-1" } }] },
+    { text: "Here's your starter's history.", toolCalls: [] },
+  ]);
+
+  const reply = await runFoodieTurn({ db, provider }, turnInput("how's my rye starter doing?"));
+
+  assertEquals(reply.actions, []); // read tool
+  const toolResults = provider.requests[1].messages.at(-1)!;
+  assert(toolResults.role === "tool_results");
+  const payload = toolResults.results[0].payload as {
+    result: { project: { name: string }; logs: unknown[] };
+  };
+  assertEquals(payload.result.project.name, "Rustic Rye");
+  assertEquals(payload.result.logs.length, 1);
+});
+
 Deno.test("get_inventory is a read tool: no action entry, no audit noise in actions[]", async () => {
   const db = new FakeDb();
   db.inventoryItems.push({

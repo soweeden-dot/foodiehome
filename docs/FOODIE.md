@@ -113,6 +113,13 @@ audited but not shown as user-visible actions.
 | `get_maintenance_issues` | read | maintenance issues (RLS), optional status filter |
 | `report_maintenance_issue` | mutate | `foodie_report_maintenance_issue` RPC |
 | `resolve_maintenance_issue` | mutate | `foodie_resolve_maintenance_issue` RPC |
+| `get_fermentation_projects` | read | fermentation projects (RLS); defaults to `status='active'` when no filter given |
+| `get_fermentation_project` | read | one project + its complete log history, newest first (RLS) |
+| `log_fermentation_event` | mutate | `foodie_log_fermentation_event` RPC — restricted to `observation`/`turning`/`temperature`; `feeding` and `stage_change` are steered to their own dedicated tools below |
+| `log_sourdough_feeding` | mutate | `foodie_log_sourdough_feeding` RPC — stores raw starter/flour/water grams only; hydration % and feed ratio are computed when read back, never asked of the model |
+| `update_fermentation_stage` | mutate | `foodie_update_fermentation_stage` RPC — updates stage/status/next-check-at; a `stage_change` log row is recorded automatically, so "stage history" needs no separate tool |
+
+Note: unlike every other domain, fermentation project *creation* (`foodie_create_fermentation_project`) is **not** an agent tool — starting a new sourdough starter or cacao batch is a UI-only action in this phase. The agent can read, log events against, and update the stage/status of existing projects, but not originate one; this was a deliberate scope line, not an oversight.
 
 Grocery and inventory writes were judged safe to include: the schema is
 complete for both, each write path is a single validated call through an
@@ -129,13 +136,21 @@ Foodie owns no scheduling and no cross-agent channel exists.
 
 ## Deferred (later streams)
 
-Domain tools beyond grocery/inventory/cleaning/home-care (meal planning,
-fermentation, recipes, camera), household_supplies management UI/tools
-(consumables like detergent — schema exists from Stream 1, untouched this
-phase), SMS/Twilio delivery of due cleaning/filter/maintenance items
-(structured for it via `reminder_event_type` gaining `'cleaning_task_due'`,
-but no worker built — see `docs/DECISIONS.md`), proposed-action confirmation
-flow (`agent_actions.status='proposed'` exists but is recorded post-hoc
+Domain tools beyond grocery/inventory/cleaning/home-care/fermentation (meal
+planning, recipes, camera), a `create_fermentation_project` agent tool
+(deliberately not built this phase — see the tool table above),
+fermentation photo capture/upload (needs a Supabase Storage bucket, which is
+itself a live-infrastructure change blocked by the current freeze —
+`fermentation_photos` stays schema-only, unused by the UI, until the freeze
+lifts), household_supplies management UI/tools (consumables like detergent —
+schema exists from Stream 1, untouched this phase), the Atlas recipe
+integration (division of responsibility decided and recorded in
+`docs/INTEROP.md`, no code/schema built), SMS/Twilio delivery of due
+cleaning/filter/maintenance/fermentation-check items (structured for it via
+`reminder_event_type`'s existing `fermentation_check_due`/`starter_feed_due`
+values plus `'cleaning_task_due'`, but no worker built — see
+`docs/DECISIONS.md`), proposed-action confirmation flow
+(`agent_actions.status='proposed'` exists but is recorded post-hoc
 `executed`/`failed` only), undo, memory-management UI, household-fact/
 historical memory population, response streaming, chat history loading in
 the client (the screen shows the live session; persistence already works
@@ -145,6 +160,6 @@ expiry/opened dates and notes, deferred — see the tool table above).
 
 ## Testing
 
-- `supabase/functions/tests/` (Deno, no network): orchestrator loop, handler auth/validation, tool validation, recurrence due-date/rollover computation — 48 tests including the "model cannot invent success", "history ≠ memory", inventory-specific ("we used the last onion" removal, unknown-id update fails cleanly), and cleaning/home-care ("Wednesday-only task rolls to today, not next Wednesday" rollover) properties.
-- `supabase/tests/foodie_test.sql`, `supabase/tests/inventory_test.sql`, and `supabase/tests/home_care_test.sql`: RPC validation codes, foodie provenance in `record_history`, membership rejection, audit append-only, conversation/memory separation, location auto-create-and-reuse, partial-update semantics, cleaning completion/skip, filter replacement, maintenance issue lifecycle.
-- `app/test/chat_controller_test.dart`, `app/test/home_care_controller_test.dart`, `app/test/home_care_screen_test.dart`, `app/test/recurrence_test.dart`: reply/action rendering from server truth, structured error surfacing, conversation continuity, cleaning/filter/maintenance controller behavior, due-date/rollover computation (Dart half, same algorithm as `recurrence.ts`).
+- `supabase/functions/tests/` (Deno, no network): orchestrator loop, handler auth/validation, tool validation, recurrence due-date/rollover computation, sourdough hydration/ratio/next-feed-due computation — 65 tests including the "model cannot invent success", "history ≠ memory", inventory-specific ("we used the last onion" removal, unknown-id update fails cleanly), cleaning/home-care ("Wednesday-only task rolls to today, not next Wednesday" rollover), and fermentation ("cacao logs a turning/observation event with zero sourdough-specific schema", "stage update records a stage_change log automatically") properties.
+- `supabase/tests/foodie_test.sql`, `supabase/tests/inventory_test.sql`, `supabase/tests/home_care_test.sql`, and `supabase/tests/fermentation_test.sql`: RPC validation codes, foodie provenance in `record_history`, membership rejection, audit append-only, conversation/memory separation, location auto-create-and-reuse, partial-update semantics, cleaning completion/skip, filter replacement, maintenance issue lifecycle, sourdough feeding + cacao event logging + stage/status updates.
+- `app/test/chat_controller_test.dart`, `app/test/home_care_controller_test.dart`, `app/test/home_care_screen_test.dart`, `app/test/recurrence_test.dart`, `app/test/fermentation_controller_test.dart`, `app/test/fermentation_screen_test.dart`, `app/test/sourdough_test.dart`: reply/action rendering from server truth, structured error surfacing, conversation continuity, cleaning/filter/maintenance/fermentation controller behavior, due-date/rollover and hydration/ratio/next-feed-due computation (Dart half, same algorithms as the TypeScript modules).

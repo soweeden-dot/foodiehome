@@ -54,6 +54,10 @@ lib/
                 and apartment maintenance issues (report/resolve) at
                 "/home-care"; tracked filters/components (log replacement)
                 at "/supplies"
+    fermentation/  fermentation projects at "/fermentation" — sourdough
+                   starters (feeding log with computed hydration/ratio/
+                   next-feed-due) and cacao batches (turn/observation
+                   events), stage/status updates with automatic history
     shell/    production nav shell: phone bottom bar / tablet rail /
               Kitchen Mode chrome, destination list, route placeholders
     dashboard/  Home route boundary (Stream 5 builds the real cards)
@@ -69,7 +73,9 @@ the full navigation/responsive/Kitchen Mode design.
 `domain/recurrence.dart` computes cleaning/filter due dates and rollover at
 read time (never stored) — the Dart half of the same algorithm as
 `supabase/functions/_shared/recurrence.ts` on the Foodie agent side.
+`domain/sourdough.dart` does the same for feeding hydration %/ratio/
+next-feed-due, mirroring `supabase/functions/_shared/sourdough.ts`.
 
-Feature screens beyond auth/shell/settings/inventory/home_care are
-PROVISIONAL placeholders until their own stream lands (Recipes, Meal Plan,
-Fermentation).
+Feature screens beyond auth/shell/settings/inventory/home_care/fermentation
+are PROVISIONAL placeholders until their own stream lands (Recipes, Meal
+Plan).

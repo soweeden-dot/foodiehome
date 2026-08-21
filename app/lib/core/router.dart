@@ -12,6 +12,7 @@ import '../features/auth/household_gate_screen.dart';
 import '../features/auth/session.dart';
 import '../features/auth/sign_in_screen.dart';
 import '../features/dashboard/dashboard_screen.dart';
+import '../features/fermentation/fermentation_screen.dart';
 import '../features/foodie/chat_screen.dart';
 import '../features/home_care/filters_screen.dart';
 import '../features/home_care/home_care_screen.dart';
@@ -80,6 +81,7 @@ Widget _destinationBody(AppDestination destination) => switch (destination.route
       '/inventory' => const InventoryScreen(),
       '/home-care' => const HomeCareScreen(),
       '/supplies' => const FiltersScreen(),
+      '/fermentation' => const FermentationScreen(),
       '/settings' => const SettingsScreen(),
       _ => PlaceholderScreen(title: destination.label, icon: destination.icon),
     };

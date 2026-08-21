@@ -8,6 +8,11 @@ import type {
   CleaningCompletionRecord,
   CleaningStatusView,
   CleaningTaskView,
+  FermentationLogType,
+  FermentationLogView,
+  FermentationProjectDetail,
+  FermentationProjectView,
+  FermentationStatus,
   FilterStatusView,
   FoodieDb,
   GroceryItemView,
@@ -30,6 +35,30 @@ import type {
 } from "../_shared/types.ts";
 import { FoodieError } from "../_shared/types.ts";
 import { computeCleaningDueDate, computeComponentDueDate, isOverdue } from "../_shared/recurrence.ts";
+
+interface FakeFermentationProject {
+  id: string;
+  projectType: string;
+  name: string;
+  status: FermentationStatus;
+  startedAt: string;
+  endedAt: string | null;
+  currentStage: string | null;
+  targetParams: Record<string, unknown> | null;
+  nextCheckAt: string | null;
+  notes: string | null;
+  deleted: boolean;
+}
+
+interface FakeFermentationLog {
+  id: string;
+  projectId: string;
+  loggedAt: string;
+  logType: FermentationLogType;
+  payload: Record<string, unknown> | null;
+  notes: string | null;
+  author: string;
+}
 
 interface FakeCleaningTask {
   id: string;
@@ -88,9 +117,12 @@ export class FakeDb implements FoodieDb {
   cleaningTasks: FakeCleaningTask[] = [];
   trackedComponents: FakeComponent[] = [];
   maintenanceIssues: FakeMaintenanceIssue[] = [];
+  fermentationProjects: FakeFermentationProject[] = [];
+  fermentationLogs: FakeFermentationLog[] = [];
   private conversationCounter = 0;
   private inventoryCounter = 0;
   private maintenanceCounter = 0;
+  private fermentationLogCounter = 0;
 
   getMembership(): Promise<{ householdId: string } | null> {
     return Promise.resolve(this.membership);
@@ -396,6 +428,141 @@ export class FakeDb implements FoodieDb {
     if (notes !== undefined) issue.notes = notes;
     const { deleted: _d, ...result } = issue;
     return Promise.resolve(result);
+  }
+
+  private static fermentationProjectView(p: FakeFermentationProject): FermentationProjectView {
+    const { deleted: _d, ...view } = p;
+    return view;
+  }
+
+  listFermentationProjects(
+    _householdId: string,
+    status?: FermentationStatus,
+  ): Promise<FermentationProjectView[]> {
+    const filterStatus = status ?? "active";
+    const projects = this.fermentationProjects
+      .filter((p) => !p.deleted && p.status === filterStatus)
+      .map(FakeDb.fermentationProjectView);
+    return Promise.resolve(projects);
+  }
+
+  getFermentationProject(
+    _householdId: string,
+    projectId: string,
+  ): Promise<FermentationProjectDetail> {
+    const project = this.fermentationProjects.find((p) => p.id === projectId && !p.deleted);
+    if (!project) {
+      return Promise.reject(new FoodieError("not_found", "fermentation project not found"));
+    }
+    const logs = this.fermentationLogs
+      .filter((l) => l.projectId === projectId)
+      .sort((a, b) => b.loggedAt.localeCompare(a.loggedAt));
+    return Promise.resolve({ project: FakeDb.fermentationProjectView(project), logs });
+  }
+
+  private findFermentationProject(projectId: string): FakeFermentationProject {
+    const project = this.fermentationProjects.find((p) => p.id === projectId && !p.deleted);
+    if (!project) throw new FoodieError("not_found", "fermentation project not found");
+    return project;
+  }
+
+  logFermentationEvent(
+    _householdId: string,
+    projectId: string,
+    logType: FermentationLogType,
+    payload?: Record<string, unknown>,
+    notes?: string,
+  ): Promise<FermentationLogView> {
+    try {
+      this.findFermentationProject(projectId);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    const log: FakeFermentationLog = {
+      id: `ferm-log-${++this.fermentationLogCounter}`,
+      projectId,
+      loggedAt: new Date().toISOString(),
+      logType,
+      payload: payload ?? null,
+      notes: notes ?? null,
+      author: "foodie",
+    };
+    this.fermentationLogs.push(log);
+    return Promise.resolve(log);
+  }
+
+  logSourdoughFeeding(
+    _householdId: string,
+    projectId: string,
+    feeding: {
+      starterG: number;
+      flourG: number;
+      waterG: number;
+      flourType?: string;
+      discardG?: number;
+      notes?: string;
+    },
+  ): Promise<FermentationLogView> {
+    try {
+      this.findFermentationProject(projectId);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    const log: FakeFermentationLog = {
+      id: `ferm-log-${++this.fermentationLogCounter}`,
+      projectId,
+      loggedAt: new Date().toISOString(),
+      logType: "feeding",
+      payload: {
+        starterG: feeding.starterG,
+        flourG: feeding.flourG,
+        waterG: feeding.waterG,
+        flourType: feeding.flourType ?? null,
+        discardG: feeding.discardG ?? null,
+      },
+      notes: feeding.notes ?? null,
+      author: "foodie",
+    };
+    this.fermentationLogs.push(log);
+    return Promise.resolve(log);
+  }
+
+  updateFermentationStage(
+    _householdId: string,
+    projectId: string,
+    update: {
+      currentStage?: string;
+      status?: FermentationStatus;
+      nextCheckAt?: string;
+      notes?: string;
+    },
+  ): Promise<FermentationProjectView> {
+    let project: FakeFermentationProject;
+    try {
+      project = this.findFermentationProject(projectId);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    if (update.currentStage !== undefined) project.currentStage = update.currentStage;
+    if (update.status !== undefined) {
+      project.status = update.status;
+      if (["completed", "discarded"].includes(update.status) && project.endedAt === null) {
+        project.endedAt = new Date().toISOString();
+      }
+    }
+    if (update.nextCheckAt !== undefined) project.nextCheckAt = update.nextCheckAt;
+    if (update.currentStage !== undefined || update.status !== undefined) {
+      this.fermentationLogs.push({
+        id: `ferm-log-${++this.fermentationLogCounter}`,
+        projectId,
+        loggedAt: new Date().toISOString(),
+        logType: "stage_change",
+        payload: { toStage: project.currentStage, toStatus: project.status },
+        notes: update.notes ?? null,
+        author: "foodie",
+      });
+    }
+    return Promise.resolve(FakeDb.fermentationProjectView(project));
   }
 
   getOrCreateConversation(

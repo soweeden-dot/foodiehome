@@ -117,9 +117,11 @@ do $$
 declare
   foodie_functions constant text[] := array[
     'current_action_source','foodie_add_grocery_item','foodie_add_inventory_item',
-    'foodie_complete_cleaning_task','foodie_log_filter_replacement',
-    'foodie_remove_inventory_item','foodie_report_maintenance_issue',
-    'foodie_resolve_maintenance_issue','foodie_save_memory','foodie_skip_cleaning_task',
+    'foodie_complete_cleaning_task','foodie_create_fermentation_project',
+    'foodie_log_fermentation_event','foodie_log_filter_replacement',
+    'foodie_log_sourdough_feeding','foodie_remove_inventory_item',
+    'foodie_report_maintenance_issue','foodie_resolve_maintenance_issue',
+    'foodie_save_memory','foodie_skip_cleaning_task','foodie_update_fermentation_stage',
     'foodie_update_inventory_item','handle_new_auth_user','handle_new_household',
     'is_household_admin','is_household_member','leave_household','log_record_history',
     'protect_last_admin','redeem_household_invite','regenerate_invite_code',

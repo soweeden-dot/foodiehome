@@ -2,10 +2,12 @@ import 'dart:async';
 
 import 'package:foodiehome/core/kitchen_mode.dart';
 import 'package:foodiehome/data/auth_gateway.dart';
+import 'package:foodiehome/data/fermentation_gateway.dart';
 import 'package:foodiehome/data/foodie_gateway.dart';
 import 'package:foodiehome/data/home_care_gateway.dart';
 import 'package:foodiehome/data/household_gateway.dart';
 import 'package:foodiehome/data/inventory_gateway.dart';
+import 'package:foodiehome/domain/fermentation.dart';
 import 'package:foodiehome/domain/home_care.dart';
 import 'package:foodiehome/domain/household.dart';
 import 'package:foodiehome/domain/inventory.dart';
@@ -370,5 +372,163 @@ class FakeHomeCareGateway implements HomeCareGateway {
       resolvedAt: DateTime.now(),
       notes: notes ?? current.notes,
     );
+  }
+}
+
+class FakeFermentationGateway implements FermentationGateway {
+  final List<FermentationProject> projects = [];
+  final List<FermentationLog> logs = [];
+  int projectCounter = 0;
+  int logCounter = 0;
+  Object? failNextCall;
+
+  void _maybeThrow() {
+    final error = failNextCall;
+    if (error != null) {
+      failNextCall = null;
+      throw error;
+    }
+  }
+
+  @override
+  Future<List<FermentationProject>> fetchProjects(String householdId, {FermentationStatus? status}) async {
+    _maybeThrow();
+    final filterStatus = status ?? FermentationStatus.active;
+    return projects.where((p) => p.status == filterStatus).toList();
+  }
+
+  @override
+  Future<FermentationProjectDetail> fetchProject(String householdId, String projectId) async {
+    _maybeThrow();
+    final project = projects.where((p) => p.id == projectId);
+    if (project.isEmpty) throw StateError('fermentation project not found');
+    final projectLogs = logs.where((l) => l.projectId == projectId).toList()
+      ..sort((a, b) => b.loggedAt.compareTo(a.loggedAt));
+    return FermentationProjectDetail(project: project.first, logs: projectLogs);
+  }
+
+  @override
+  Future<FermentationProject> createProject(
+    String householdId, {
+    required String projectType,
+    required String name,
+    Map<String, dynamic>? targetParams,
+    DateTime? nextCheckAt,
+    String? notes,
+  }) async {
+    _maybeThrow();
+    final project = FermentationProject(
+      id: 'ferm-${++projectCounter}',
+      projectType: projectType,
+      name: name,
+      status: FermentationStatus.active,
+      startedAt: DateTime.now(),
+      targetParams: targetParams ?? const {},
+      nextCheckAt: nextCheckAt,
+      notes: notes,
+    );
+    projects.add(project);
+    return project;
+  }
+
+  @override
+  Future<FermentationLog> logEvent(
+    String householdId,
+    String projectId, {
+    required FermentationLogType logType,
+    Map<String, dynamic>? payload,
+    String? notes,
+  }) async {
+    _maybeThrow();
+    if (!projects.any((p) => p.id == projectId)) {
+      throw StateError('fermentation project not found');
+    }
+    final log = FermentationLog(
+      id: 'ferm-log-${++logCounter}',
+      projectId: projectId,
+      loggedAt: DateTime.now(),
+      logType: logType,
+      payload: payload ?? const {},
+      notes: notes,
+      author: 'foodie',
+    );
+    logs.add(log);
+    return log;
+  }
+
+  @override
+  Future<FermentationLog> logSourdoughFeeding(
+    String householdId,
+    String projectId, {
+    required double starterG,
+    required double flourG,
+    required double waterG,
+    String? flourType,
+    double? discardG,
+    String? notes,
+  }) async {
+    _maybeThrow();
+    if (!projects.any((p) => p.id == projectId)) {
+      throw StateError('fermentation project not found');
+    }
+    final log = FermentationLog(
+      id: 'ferm-log-${++logCounter}',
+      projectId: projectId,
+      loggedAt: DateTime.now(),
+      logType: FermentationLogType.feeding,
+      payload: {
+        'starterG': starterG,
+        'flourG': flourG,
+        'waterG': waterG,
+        'flourType': ?flourType,
+        'discardG': ?discardG,
+      },
+      notes: notes,
+      author: 'foodie',
+    );
+    logs.add(log);
+    return log;
+  }
+
+  @override
+  Future<FermentationProject> updateStage(
+    String householdId,
+    String projectId, {
+    String? currentStage,
+    FermentationStatus? status,
+    DateTime? nextCheckAt,
+    String? notes,
+  }) async {
+    _maybeThrow();
+    final index = projects.indexWhere((p) => p.id == projectId);
+    if (index == -1) throw StateError('fermentation project not found');
+    final current = projects[index];
+    final updated = FermentationProject(
+      id: current.id,
+      projectType: current.projectType,
+      name: current.name,
+      status: status ?? current.status,
+      startedAt: current.startedAt,
+      endedAt: (status == FermentationStatus.completed || status == FermentationStatus.discarded)
+          ? (current.endedAt ?? DateTime.now())
+          : current.endedAt,
+      currentStage: currentStage ?? current.currentStage,
+      targetParams: current.targetParams,
+      nextCheckAt: nextCheckAt ?? current.nextCheckAt,
+      notes: current.notes,
+    );
+    projects[index] = updated;
+    if (currentStage != null || status != null) {
+      logs.add(FermentationLog(
+        id: 'ferm-log-${++logCounter}',
+        projectId: projectId,
+        loggedAt: DateTime.now(),
+        logType: FermentationLogType.stageChange,
+        payload: {'toStage': updated.currentStage, 'toStatus': updated.status.toWire()},
+        notes: notes,
+        author: 'foodie',
+      ));
+    }
+    return updated;
   }
 }

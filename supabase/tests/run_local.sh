@@ -42,7 +42,7 @@ for f in "$REPO_DIR"/supabase/migrations/*.sql; do
   run_sql foodie_test "$f"
 done
 
-for t in smoke_test.sql membership_test.sql foodie_test.sql inventory_test.sql home_care_test.sql; do
+for t in smoke_test.sql membership_test.sql foodie_test.sql inventory_test.sql home_care_test.sql fermentation_test.sql; do
   echo "running $t"
   run_sql foodie_test "$REPO_DIR/supabase/tests/$t"
 done

@@ -13,9 +13,18 @@
 //   get_cleaning_status, complete_cleaning_task, skip_cleaning_task,
 //   get_filter_status, log_filter_replacement, get_maintenance_issues,
 //   report_maintenance_issue, resolve_maintenance_issue
+// Fermentation Tracking phase adds:
+//   get_fermentation_projects, get_fermentation_project,
+//   log_fermentation_event, log_sourdough_feeding, update_fermentation_stage
 // Later streams REGISTER new tools here; nothing else widens agent access.
 
-import type { FoodieDb, MaintenanceIssueStatus, ToolSpec } from "./types.ts";
+import type {
+  FermentationLogType,
+  FermentationStatus,
+  FoodieDb,
+  MaintenanceIssueStatus,
+  ToolSpec,
+} from "./types.ts";
 
 export type Validation =
   | { ok: true; value: Record<string, unknown> }
@@ -78,6 +87,17 @@ function optionalNumber(
   return v;
 }
 
+function requirePositiveNumber(
+  obj: Record<string, unknown>,
+  field: string,
+): number | { error: string } {
+  const v = obj[field];
+  if (typeof v !== "number" || !Number.isFinite(v) || v <= 0 || v > 100000) {
+    return { error: `"${field}" must be a number greater than 0 (and at most 100000)` };
+  }
+  return v;
+}
+
 function optionalString(
   obj: Record<string, unknown>,
   field: string,
@@ -91,6 +111,18 @@ function optionalString(
   }
   const trimmed = v.trim();
   return trimmed.length === 0 ? undefined : trimmed;
+}
+
+function optionalPlainObject(
+  obj: Record<string, unknown>,
+  field: string,
+): Record<string, unknown> | undefined | { error: string } {
+  const v = obj[field];
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "object" || Array.isArray(v)) {
+    return { error: `"${field}" must be an object` };
+  }
+  return v as Record<string, unknown>;
 }
 
 function isError(v: unknown): v is { error: string } {
@@ -113,6 +145,12 @@ function optionalDate(
 
 const SUPPLY_LEVELS = ["full", "good", "low", "almost_empty", "out"] as const;
 const MAINTENANCE_STATUSES = ["open", "in_progress", "resolved"] as const;
+const FERMENTATION_STATUSES = ["planned", "active", "paused", "completed", "discarded"] as const;
+// Deliberately excludes 'feeding' (its own tool: log_sourdough_feeding) and
+// 'stage_change' (its own tool: update_fermentation_stage, which records
+// the stage_change log automatically) — this generic tool is for
+// observations/turns/temperature checks, not the specialized events.
+const GENERIC_FERMENTATION_LOG_TYPES = ["observation", "turning", "temperature"] as const;
 
 function optionalEnum<T extends string>(
   obj: Record<string, unknown>,
@@ -753,9 +791,262 @@ const resolveMaintenanceIssue: ToolDefinition = {
   },
 };
 
-/** The Stream 3 registry, extended by the Household Inventory and Cleaning +
- * Home Care phases. Later streams REGISTER new tools here; nothing else
- * widens agent access. */
+const getFermentationProjects: ToolDefinition = {
+  spec: {
+    name: "get_fermentation_projects",
+    description:
+      "List the household's fermentation projects (sourdough starters, cacao " +
+      "batches, and anything else fermenting). Defaults to active projects " +
+      "only; pass a status to see planned/paused/completed/discarded ones. " +
+      "Call this before logging an event or updating a project to find its id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          enum: [...FERMENTATION_STATUSES],
+          description: "Optional filter; defaults to 'active' when omitted",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  mutating: false,
+  validate: (input) => {
+    const obj = asObject(input) ?? {};
+    const status = optionalEnum(obj, "status", FERMENTATION_STATUSES);
+    if (isError(status)) return { ok: false, error: status.error };
+    const value: Record<string, unknown> = {};
+    if (status !== undefined) value.status = status;
+    return { ok: true, value };
+  },
+  execute: async (ctx, input) => {
+    const projects = await ctx.db.listFermentationProjects(
+      ctx.householdId,
+      input.status as FermentationStatus | undefined,
+    );
+    return { summary: "Read fermentation projects", data: { projects } };
+  },
+};
+
+const getFermentationProject: ToolDefinition = {
+  spec: {
+    name: "get_fermentation_project",
+    description:
+      "Get ONE fermentation project's full detail, including its complete " +
+      "log history (feedings, turns, observations, stage changes) newest " +
+      "first — use this to answer questions about a specific starter or batch.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_id: { type: "string", description: "The project's id, from get_fermentation_projects" },
+      },
+      required: ["project_id"],
+      additionalProperties: false,
+    },
+  },
+  mutating: false,
+  validate: (input) => {
+    const obj = asObject(input);
+    if (!obj) return { ok: false, error: "input must be an object" };
+    const projectId = requireString(obj, "project_id", 100);
+    if (isError(projectId)) return { ok: false, error: projectId.error };
+    return { ok: true, value: { projectId } };
+  },
+  execute: async (ctx, input) => {
+    const detail = await ctx.db.getFermentationProject(ctx.householdId, input.projectId as string);
+    return { summary: `Read fermentation project "${detail.project.name}"`, data: detail };
+  },
+};
+
+const logFermentationEvent: ToolDefinition = {
+  spec: {
+    name: "log_fermentation_event",
+    description:
+      "Log an observation, turn/stir, or temperature check for ONE fermentation " +
+      "project, found by its id (call get_fermentation_projects first). Use " +
+      "log_sourdough_feeding instead for sourdough feedings, and " +
+      "update_fermentation_stage instead for stage/status changes. Only " +
+      "report the event as logged after this tool succeeds.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_id: { type: "string", description: "The project's id" },
+        log_type: {
+          type: "string",
+          enum: [...GENERIC_FERMENTATION_LOG_TYPES],
+          description: "'temperature' payload example: {\"temp_c\": 31}",
+        },
+        payload: {
+          type: "object",
+          description: "Optional structured data, e.g. {\"temp_c\": 31} or {\"turn_number\": 2}",
+        },
+        notes: { type: "string", description: "Optional free-text note, e.g. smell/appearance" },
+      },
+      required: ["project_id", "log_type"],
+      additionalProperties: false,
+    },
+  },
+  mutating: true,
+  validate: (input) => {
+    const obj = asObject(input);
+    if (!obj) return { ok: false, error: "input must be an object" };
+    const projectId = requireString(obj, "project_id", 100);
+    if (isError(projectId)) return { ok: false, error: projectId.error };
+    const logType = optionalEnum(obj, "log_type", GENERIC_FERMENTATION_LOG_TYPES);
+    if (isError(logType)) return { ok: false, error: logType.error };
+    if (logType === undefined) return { ok: false, error: '"log_type" is required' };
+    const payload = optionalPlainObject(obj, "payload");
+    if (isError(payload)) return { ok: false, error: payload.error };
+    const notes = optionalString(obj, "notes", 1000);
+    if (isError(notes)) return { ok: false, error: notes.error };
+    const value: Record<string, unknown> = { projectId, logType };
+    if (payload !== undefined) value.payload = payload;
+    if (notes !== undefined) value.notes = notes;
+    return { ok: true, value };
+  },
+  execute: async (ctx, input) => {
+    const log = await ctx.db.logFermentationEvent(
+      ctx.householdId,
+      input.projectId as string,
+      input.logType as FermentationLogType,
+      input.payload as Record<string, unknown> | undefined,
+      input.notes as string | undefined,
+    );
+    return { summary: `Logged a ${log.logType} event`, data: { logged: log } };
+  },
+};
+
+const logSourdoughFeeding: ToolDefinition = {
+  spec: {
+    name: "log_sourdough_feeding",
+    description:
+      "Log a sourdough starter feeding for ONE project, found by its id " +
+      "(call get_fermentation_projects first). Records the raw amounts; " +
+      "hydration and feed ratio are derived from them when read back, not " +
+      "asked for here. Only report the feeding as logged after this tool succeeds.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_id: { type: "string", description: "The project's id" },
+        starter_g: { type: "number", description: "Starter used, in grams" },
+        flour_g: { type: "number", description: "Flour added, in grams" },
+        water_g: { type: "number", description: "Water added, in grams" },
+        flour_type: { type: "string", description: "Optional, e.g. 'rye', 'bread flour'" },
+        discard_g: { type: "number", description: "Optional amount discarded, in grams" },
+        notes: { type: "string", description: "Optional note, e.g. rise/peak observations" },
+      },
+      required: ["project_id", "starter_g", "flour_g", "water_g"],
+      additionalProperties: false,
+    },
+  },
+  mutating: true,
+  validate: (input) => {
+    const obj = asObject(input);
+    if (!obj) return { ok: false, error: "input must be an object" };
+    const projectId = requireString(obj, "project_id", 100);
+    if (isError(projectId)) return { ok: false, error: projectId.error };
+    const starterG = requirePositiveNumber(obj, "starter_g");
+    if (isError(starterG)) return { ok: false, error: starterG.error };
+    const flourG = requirePositiveNumber(obj, "flour_g");
+    if (isError(flourG)) return { ok: false, error: flourG.error };
+    const waterG = requirePositiveNumber(obj, "water_g");
+    if (isError(waterG)) return { ok: false, error: waterG.error };
+    const flourType = optionalString(obj, "flour_type", 50);
+    if (isError(flourType)) return { ok: false, error: flourType.error };
+    const discardG = optionalNumber(obj, "discard_g");
+    if (isError(discardG)) return { ok: false, error: discardG.error };
+    const notes = optionalString(obj, "notes", 1000);
+    if (isError(notes)) return { ok: false, error: notes.error };
+    const value: Record<string, unknown> = { projectId, starterG, flourG, waterG };
+    if (flourType !== undefined) value.flourType = flourType;
+    if (discardG !== undefined) value.discardG = discardG;
+    if (notes !== undefined) value.notes = notes;
+    return { ok: true, value };
+  },
+  execute: async (ctx, input) => {
+    const log = await ctx.db.logSourdoughFeeding(ctx.householdId, input.projectId as string, {
+      starterG: input.starterG as number,
+      flourG: input.flourG as number,
+      waterG: input.waterG as number,
+      flourType: input.flourType as string | undefined,
+      discardG: input.discardG as number | undefined,
+      notes: input.notes as string | undefined,
+    });
+    return { summary: "Logged a sourdough feeding", data: { logged: log } };
+  },
+};
+
+const updateFermentationStage: ToolDefinition = {
+  spec: {
+    name: "update_fermentation_stage",
+    description:
+      "Update ONE fermentation project's current stage, status, and/or next " +
+      "check-in time, found by its id (call get_fermentation_projects first). " +
+      "At least one field must be provided. A stage/status change is recorded " +
+      "in the project's log history automatically. Setting status to " +
+      "'completed' or 'discarded' archives the project. Only report the " +
+      "update as done after this tool succeeds.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_id: { type: "string", description: "The project's id" },
+        current_stage: { type: "string", description: "New stage, e.g. 'drying', 'day 3'" },
+        status: { type: "string", enum: [...FERMENTATION_STATUSES], description: "New status" },
+        next_check_at: {
+          type: "string",
+          description: "Optional next check-in time, ISO 8601 (e.g. '2026-08-22T09:00:00Z')",
+        },
+        notes: { type: "string", description: "Optional note about the change" },
+      },
+      required: ["project_id"],
+      additionalProperties: false,
+    },
+  },
+  mutating: true,
+  validate: (input) => {
+    const obj = asObject(input);
+    if (!obj) return { ok: false, error: "input must be an object" };
+    const projectId = requireString(obj, "project_id", 100);
+    if (isError(projectId)) return { ok: false, error: projectId.error };
+    const currentStage = optionalString(obj, "current_stage", 100);
+    if (isError(currentStage)) return { ok: false, error: currentStage.error };
+    const status = optionalEnum(obj, "status", FERMENTATION_STATUSES);
+    if (isError(status)) return { ok: false, error: status.error };
+    const nextCheckAtRaw = obj.next_check_at;
+    let nextCheckAt: string | undefined;
+    if (nextCheckAtRaw !== undefined && nextCheckAtRaw !== null) {
+      if (typeof nextCheckAtRaw !== "string" || Number.isNaN(Date.parse(nextCheckAtRaw))) {
+        return { ok: false, error: '"next_check_at" must be a valid ISO 8601 timestamp' };
+      }
+      nextCheckAt = nextCheckAtRaw;
+    }
+    const notes = optionalString(obj, "notes", 1000);
+    if (isError(notes)) return { ok: false, error: notes.error };
+    if (currentStage === undefined && status === undefined && nextCheckAt === undefined) {
+      return { ok: false, error: "at least one field to update must be provided" };
+    }
+    const value: Record<string, unknown> = { projectId };
+    if (currentStage !== undefined) value.currentStage = currentStage;
+    if (status !== undefined) value.status = status;
+    if (nextCheckAt !== undefined) value.nextCheckAt = nextCheckAt;
+    if (notes !== undefined) value.notes = notes;
+    return { ok: true, value };
+  },
+  execute: async (ctx, input) => {
+    const project = await ctx.db.updateFermentationStage(ctx.householdId, input.projectId as string, {
+      currentStage: input.currentStage as string | undefined,
+      status: input.status as FermentationStatus | undefined,
+      nextCheckAt: input.nextCheckAt as string | undefined,
+      notes: input.notes as string | undefined,
+    });
+    return { summary: `Updated fermentation project "${project.name}"`, data: { updated: project } };
+  },
+};
+
+/** The Stream 3 registry, extended by the Household Inventory, Cleaning +
+ * Home Care, and Fermentation Tracking phases. Later streams REGISTER new
+ * tools here; nothing else widens agent access. */
 export const toolRegistry: ReadonlyMap<string, ToolDefinition> = new Map(
   [
     getBasicHouseholdContext,
@@ -775,6 +1066,11 @@ export const toolRegistry: ReadonlyMap<string, ToolDefinition> = new Map(
     getMaintenanceIssues,
     reportMaintenanceIssue,
     resolveMaintenanceIssue,
+    getFermentationProjects,
+    getFermentationProject,
+    logFermentationEvent,
+    logSourdoughFeeding,
+    updateFermentationStage,
   ].map((tool) => [tool.spec.name, tool]),
 );
 

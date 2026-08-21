@@ -1,7 +1,7 @@
 import { assert, assertEquals } from "./asserts.ts";
 import { toolRegistry } from "../_shared/tools.ts";
 
-Deno.test("registry contains exactly the Stream 3 + Household Inventory + Cleaning/Home Care tool set", () => {
+Deno.test("registry contains exactly the Stream 3 + Household Inventory + Cleaning/Home Care + Fermentation tool set", () => {
   assertEquals(
     [...toolRegistry.keys()].sort(),
     [
@@ -10,17 +10,22 @@ Deno.test("registry contains exactly the Stream 3 + Household Inventory + Cleani
       "complete_cleaning_task",
       "get_basic_household_context",
       "get_cleaning_status",
+      "get_fermentation_project",
+      "get_fermentation_projects",
       "get_filter_status",
       "get_grocery_list",
       "get_household_preferences",
       "get_inventory",
       "get_maintenance_issues",
+      "log_fermentation_event",
       "log_filter_replacement",
+      "log_sourdough_feeding",
       "remove_inventory_item",
       "report_maintenance_issue",
       "resolve_maintenance_issue",
       "save_household_preference",
       "skip_cleaning_task",
+      "update_fermentation_stage",
       "update_inventory_item",
     ],
   );
@@ -66,6 +71,7 @@ Deno.test("read tools accept empty input", () => {
       "get_cleaning_status",
       "get_filter_status",
       "get_maintenance_issues",
+      "get_fermentation_projects",
     ]
   ) {
     const tool = toolRegistry.get(name)!;
@@ -86,6 +92,10 @@ Deno.test("mutating flags are correct", () => {
   assertEquals(toolRegistry.get("log_filter_replacement")!.mutating, true);
   assertEquals(toolRegistry.get("report_maintenance_issue")!.mutating, true);
   assertEquals(toolRegistry.get("resolve_maintenance_issue")!.mutating, true);
+  assertEquals(toolRegistry.get("log_fermentation_event")!.mutating, true);
+  assertEquals(toolRegistry.get("log_sourdough_feeding")!.mutating, true);
+  assertEquals(toolRegistry.get("update_fermentation_stage")!.mutating, true);
+  assertEquals(toolRegistry.get("get_fermentation_project")!.mutating, false);
 });
 
 Deno.test("add_inventory_item validation", () => {
@@ -188,4 +198,69 @@ Deno.test("resolve_maintenance_issue validation", () => {
   assert(tool.validate({ issue_id: "issue-1", notes: "plumber fixed it" }).ok);
   assert(!tool.validate({}).ok);
   assert(!tool.validate({ issue_id: "" }).ok);
+});
+
+Deno.test("get_fermentation_projects validation", () => {
+  const tool = toolRegistry.get("get_fermentation_projects")!;
+
+  assert(tool.validate({}).ok);
+  assert(tool.validate({ status: "active" }).ok);
+  assert(tool.validate({ status: "completed" }).ok);
+  assert(!tool.validate({ status: "fermenting" }).ok);
+});
+
+Deno.test("get_fermentation_project validation", () => {
+  const tool = toolRegistry.get("get_fermentation_project")!;
+
+  assert(tool.validate({ project_id: "proj-1" }).ok);
+  assert(!tool.validate({}).ok);
+  assert(!tool.validate({ project_id: "" }).ok);
+});
+
+Deno.test("log_fermentation_event validation", () => {
+  const tool = toolRegistry.get("log_fermentation_event")!;
+
+  assert(tool.validate({ project_id: "proj-1", log_type: "observation" }).ok);
+  assert(tool.validate({
+    project_id: "proj-1",
+    log_type: "temperature",
+    payload: { temp_c: 31 },
+    notes: "warm spot",
+  }).ok);
+  assert(!tool.validate({}).ok); // missing project_id and log_type
+  assert(!tool.validate({ project_id: "proj-1" }).ok); // missing log_type
+  assert(!tool.validate({ project_id: "proj-1", log_type: "feeding" }).ok); // use log_sourdough_feeding
+  assert(!tool.validate({ project_id: "proj-1", log_type: "stage_change" }).ok); // use update_fermentation_stage
+  assert(!tool.validate({ project_id: "proj-1", log_type: "observation", payload: "not an object" }).ok);
+  assert(!tool.validate({ project_id: "proj-1", log_type: "observation", payload: [1, 2] }).ok);
+});
+
+Deno.test("log_sourdough_feeding validation", () => {
+  const tool = toolRegistry.get("log_sourdough_feeding")!;
+
+  assert(tool.validate({ project_id: "proj-1", starter_g: 10, flour_g: 50, water_g: 50 }).ok);
+  assert(tool.validate({
+    project_id: "proj-1",
+    starter_g: 10,
+    flour_g: 50,
+    water_g: 50,
+    flour_type: "rye",
+    discard_g: 5,
+    notes: "good rise",
+  }).ok);
+  assert(!tool.validate({}).ok);
+  assert(!tool.validate({ project_id: "proj-1", starter_g: 0, flour_g: 50, water_g: 50 }).ok);
+  assert(!tool.validate({ project_id: "proj-1", starter_g: 10, flour_g: -5, water_g: 50 }).ok);
+  assert(!tool.validate({ project_id: "proj-1", starter_g: 10, flour_g: 50 }).ok); // missing water_g
+});
+
+Deno.test("update_fermentation_stage validation", () => {
+  const tool = toolRegistry.get("update_fermentation_stage")!;
+
+  assert(tool.validate({ project_id: "proj-1", current_stage: "drying" }).ok);
+  assert(tool.validate({ project_id: "proj-1", status: "completed" }).ok);
+  assert(tool.validate({ project_id: "proj-1", next_check_at: "2026-08-22T09:00:00Z" }).ok);
+  assert(!tool.validate({ project_id: "proj-1" }).ok); // no field to change
+  assert(!tool.validate({ project_id: "proj-1", status: "fermenting" }).ok);
+  assert(!tool.validate({ project_id: "proj-1", next_check_at: "not-a-date" }).ok);
 });

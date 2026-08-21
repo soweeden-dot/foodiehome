@@ -72,6 +72,49 @@ schedule (so meal-prep timing can account for it). Neither is committed to;
 recorded here only so this doesn't get forgotten when the coordinator is
 eventually designed.
 
+## Recipes: Atlas owns creation, Foodie owns cooking (decided 2026-08-08, not built)
+
+**Division of responsibility, decided now so future work builds toward it
+rather than away from it — no schema or code changes made yet:**
+
+- **Atlas** will eventually be the rich recipe-creation/editor system: the
+  place a household authors, edits, and versions a recipe.
+- **Foodie** reads and understands recipes for its own jobs — cooking,
+  inventory consumption, grocery generation, scaling, substitutions, guided
+  cooking (Cooking Mode). Foodie is a *consumer* of recipe content, never
+  the system of record for a recipe Atlas considers its own.
+- **Foodie must never silently modify a master recipe.** Any future
+  recipe change Foodie's agent proposes (e.g. "scale this to 6 servings and
+  save it") must be explicit and version-safe: either it writes to a
+  Foodie-local copy/variant, or it goes through an explicit, user-confirmed,
+  versioned write path back to Atlas — never a silent overwrite of the
+  master.
+
+**How this sits on `foodie.recipes` (migration 04), designed but not
+implemented this phase:** the table already exists as Foodie's own local
+recipe store — that doesn't go away. The future interop point is a stable
+external identity a Foodie-local recipe row can optionally carry:
+
+- `external_recipe_id` (text, nullable) — Atlas's id for the master recipe,
+  when this row represents (a cached/synced copy of, or a scaled variant
+  derived from) an Atlas recipe. Null for recipes that are purely
+  Foodie-local (never came from Atlas).
+- `external_source` (text, nullable, e.g. `'atlas'`) — which system owns
+  the master, alongside the id (mirrors the `action_source` vocabulary
+  already used for provenance elsewhere in this schema).
+- `external_version` (integer or timestamp, nullable) — the master's
+  version Foodie last synced, so a future sync can detect the master moved
+  on without Foodie's copy knowing, rather than assuming staleness never
+  happens.
+
+These are **not migrated in yet** — this section records the intended
+shape so the eventual Atlas integration stream adds exactly these fields
+(or finds a documented reason to deviate) instead of designing from
+scratch. No Foodie code reads or writes any of this today; `foodie.recipes`
+continues to serve only Foodie-local recipes until Atlas integration is an
+explicitly scoped, approved stream (same gating as the rest of this
+document).
+
 ## Shape, when it's built (not now)
 
 Consistent with ARCHITECTURE.md §28's existing compatibility points:

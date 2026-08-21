@@ -219,6 +219,52 @@ export interface MaintenanceIssueView {
   notes: string | null;
 }
 
+// ---------------------------------------------------------------------------
+// Fermentation Tracking (Migration 16). project_type/log_type are the only
+// specialization mechanism — sourdough and cacao share this exact shape;
+// see sourdough.ts for the sourdough-specific derived values (hydration,
+// ratio, next-feed-due), computed at read time, never stored.
+// ---------------------------------------------------------------------------
+
+export type FermentationStatus = "planned" | "active" | "paused" | "completed" | "discarded";
+
+export type FermentationLogType =
+  | "observation"
+  | "feeding"
+  | "turning"
+  | "temperature"
+  | "stage_change"
+  | "ai_observation";
+
+export interface FermentationProjectView {
+  id: string;
+  projectType: string;
+  name: string;
+  status: FermentationStatus;
+  startedAt: string;
+  endedAt: string | null;
+  currentStage: string | null;
+  /** Type-specific parameters (sourdough: state/feed_interval_hours/...; cacao: target_days/...). */
+  targetParams: Record<string, unknown> | null;
+  nextCheckAt: string | null;
+  notes: string | null;
+}
+
+export interface FermentationLogView {
+  id: string;
+  projectId: string;
+  loggedAt: string;
+  logType: FermentationLogType;
+  payload: Record<string, unknown> | null;
+  notes: string | null;
+  author: string;
+}
+
+export interface FermentationProjectDetail {
+  project: FermentationProjectView;
+  logs: FermentationLogView[];
+}
+
 export type ActionStatus = "executed" | "failed";
 
 /** Intent-level audit entry (maps to the agent_actions table). */
@@ -299,6 +345,44 @@ export interface FoodieDb {
     issueId: string,
     notes?: string,
   ): Promise<MaintenanceIssueView>;
+
+  listFermentationProjects(
+    householdId: string,
+    status?: FermentationStatus,
+  ): Promise<FermentationProjectView[]>;
+  getFermentationProject(
+    householdId: string,
+    projectId: string,
+  ): Promise<FermentationProjectDetail>;
+  logFermentationEvent(
+    householdId: string,
+    projectId: string,
+    logType: FermentationLogType,
+    payload?: Record<string, unknown>,
+    notes?: string,
+  ): Promise<FermentationLogView>;
+  logSourdoughFeeding(
+    householdId: string,
+    projectId: string,
+    feeding: {
+      starterG: number;
+      flourG: number;
+      waterG: number;
+      flourType?: string;
+      discardG?: number;
+      notes?: string;
+    },
+  ): Promise<FermentationLogView>;
+  updateFermentationStage(
+    householdId: string,
+    projectId: string,
+    update: {
+      currentStage?: string;
+      status?: FermentationStatus;
+      nextCheckAt?: string;
+      notes?: string;
+    },
+  ): Promise<FermentationProjectView>;
 
   getOrCreateConversation(
     householdId: string,

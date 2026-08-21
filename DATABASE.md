@@ -226,6 +226,22 @@ Five write RPCs, same SECURITY INVOKER + validated + `app.action_source='foodie'
 | `foodie_report_maintenance_issue(...)` | Validates a non-empty, ≤200-char title (`P0007`); inserts with `status='open'`, `reported_by=auth.uid()`. |
 | `foodie_resolve_maintenance_issue(...)` | Sets `status='resolved'`, `resolved_at=now()`, optionally updates `notes`. `P0008` if not found. |
 
+### Fermentation RPCs (`20260808250000_foodie_fermentation_rpcs.sql`) — Fermentation Tracking phase
+
+No table or column changes — `fermentation_projects`/`fermentation_logs` are exactly as designed in migration 05. Sourdough and cacao are both **just `project_type`/`log_type` conventions on the existing generic model**, proof that it doesn't force sourdough's shape onto other fermentation types:
+
+- Sourdough: `project_type='sourdough_starter'`; `target_params` carries `{"state": "active"|"refrigerated", "feed_interval_hours": N, ...}`; each feeding is a `log_type='feeding'` row whose `payload` holds only the raw measurements `{starter_g, flour_g, water_g, flour_type, discard_g}`. Hydration %, feed ratio, and next-feed-due are **computed at read time** from those raw numbers (`supabase/functions/_shared/sourdough.ts`, `app/lib/domain/sourdough.dart`) — never stored, so a derived value can't drift from the numbers it came from.
+- Cacao: `project_type='cacao'`; turns are `log_type='turning'`; smell/appearance/liquid-drainage notes are `log_type='observation'`; drying/roasting are `current_stage` values with `stage_change` log rows. Zero cacao-specific schema.
+
+Four write RPCs, same SECURITY INVOKER + validated + `app.action_source='foodie'` pattern, continuing the `P000x` error sequence. `fermentation_logs.author` uses the shared `action_source` vocabulary (migration 12), set via `current_action_source()` so it reflects the same 'foodie' stamp:
+
+| Function | Purpose |
+|---|---|
+| `foodie_create_fermentation_project(...)` | Validates `project_type`/`name`; inserts with `status='active'`. Not an agent tool (see `docs/FOODIE.md`) — this is the UI's "start a project" write path. |
+| `foodie_log_fermentation_event(...)` | Generic append to `fermentation_logs` for any `log_type` — the agent's tool narrows this to observation/turning/temperature; the RPC itself stays reusable. `P0008` if the project doesn't exist. |
+| `foodie_log_sourdough_feeding(...)` | Validates starter/flour/water grams (`P0007` if ≤0), inserts a `log_type='feeding'` row with the raw measurements only — no hydration/ratio computed into the payload. |
+| `foodie_update_fermentation_stage(...)` | Updates `current_stage`/`status`/`next_check_at` (at least one required, `P0007` otherwise); records a `stage_change` log row automatically, capturing from→to — "stage history" is just this log stream, not a separate table. Setting `status` to `completed`/`discarded` sets `ended_at` if unset. |
+
 ## 4. Relationship map (condensed)
 
 ```
@@ -319,6 +335,7 @@ Exceptions to the standard policy:
 - Append-only streams (logs, completions, replacements) → conflict-free by construction.
 - `record_history` captures overwrites → LWW conflict losers are never silently unrecoverable.
 - Cleaning/component due dates are **computed at read time** (from the last completion/replacement + the `recurrence_rules` row), never persisted as occurrence rows — nothing to keep in sync across devices or with a future notification worker. Reimplemented per-runtime: `supabase/functions/_shared/recurrence.ts` (Edge Function tools) and `app/lib/domain/recurrence.dart` (Flutter UI), same algorithm.
+- Sourdough hydration %, feed ratio, and next-feed-due are likewise **computed at read time** from a feeding log's raw grams — never persisted. Reimplemented per-runtime: `supabase/functions/_shared/sourdough.ts` and `app/lib/domain/sourdough.dart`.
 
 ## 9. Validation
 
@@ -331,10 +348,11 @@ Exceptions to the standard policy:
 - `foodie_test.sql` — memory RPCs, grocery RPC, household-scope rejection, conversation/memory separation, agent-audit append-only enforcement.
 - `inventory_test.sql` — location auto-create and case-insensitive reuse, argument validation, partial-update (`COALESCE`) semantics, `P0008` not-found on update/double-remove, household-scope rejection.
 - `home_care_test.sql` — cleaning task completion (checklist snapshot, `foodie` provenance) and skip (separate outcome, no accidental completion row), `P0008` on a missing task, filter replacement (history row + spares decrement floored at 0), maintenance issue report/resolve/`P0008`/`P0007`, household-scope rejection.
+- `fermentation_test.sql` — sourdough project creation and feeding (raw payload stored as-is, `foodie` provenance, `P0007` on invalid amounts), cacao project with generic turning/observation events (proving the shared log stream needs no cacao-specific schema), stage/status updates recording an automatic `stage_change` log entry, `ended_at` set on completion, `P0008`/`P0007` error cases, household-scope rejection.
 
 **`foodie_coexistence_test`** — proves the schema-isolation guarantee concretely, not just by inspection:
 - `keep_track_stub.sql` — simulates Keep Track's pre-existing `public` footprint (a `profiles` table, a `set_updated_at()` function, and an `auth.users` provisioning trigger — the two collision candidates identified during design, plus the standard shared-table pattern), applied **before** any Foodie migration.
-- `coexistence_test.sql` — applied after all 15 Foodie migrations; asserts Keep Track's simulated table/function are byte-for-byte unchanged (including the function *body*, not just its existence — `CREATE OR REPLACE FUNCTION` overwrites silently with no error, so existence alone wouldn't catch that failure mode), both `auth.users` triggers fire independently on a real signup, no Foodie table or function exists anywhere under `public`, and all 34 expected tables exist in `foodie`.
+- `coexistence_test.sql` — applied after all 16 Foodie migrations; asserts Keep Track's simulated table/function are byte-for-byte unchanged (including the function *body*, not just its existence — `CREATE OR REPLACE FUNCTION` overwrites silently with no error, so existence alone wouldn't catch that failure mode), both `auth.users` triggers fire independently on a real signup, no Foodie table or function exists anywhere under `public`, and all 34 expected tables exist in `foodie` (unchanged from the Cleaning + Home Care phase — the Fermentation phase adds RPCs only, no new tables).
 
 Kept in separate databases because `coexistence_test.sql`'s extra signup would otherwise throw off the exact user/profile counts the functional tests assert.
 

@@ -27,6 +27,11 @@ import {
   type CleaningCompletionRecord,
   type CleaningStatusView,
   type CleaningTaskView,
+  type FermentationLogType,
+  type FermentationLogView,
+  type FermentationProjectDetail,
+  type FermentationProjectView,
+  type FermentationStatus,
   type FilterStatusView,
   type FoodieDb,
   type GroceryItemView,
@@ -599,6 +604,152 @@ export class SupabaseFoodieDb implements FoodieDb {
       resolvedAt: row.resolved_at as string | null,
       notes: row.notes as string | null,
     };
+  }
+
+  private static fermentationProjectFromRow(row: Record<string, unknown>): FermentationProjectView {
+    return {
+      id: row.id as string,
+      projectType: row.project_type as string,
+      name: row.name as string,
+      status: row.status as FermentationStatus,
+      startedAt: row.started_at as string,
+      endedAt: row.ended_at as string | null,
+      currentStage: row.current_stage as string | null,
+      targetParams: (row.target_params as Record<string, unknown> | null) ?? null,
+      nextCheckAt: row.next_check_at as string | null,
+      notes: row.notes as string | null,
+    };
+  }
+
+  private static fermentationLogFromRow(row: Record<string, unknown>): FermentationLogView {
+    return {
+      id: row.id as string,
+      projectId: row.project_id as string,
+      loggedAt: row.logged_at as string,
+      logType: row.log_type as FermentationLogType,
+      payload: (row.payload as Record<string, unknown> | null) ?? null,
+      notes: row.notes as string | null,
+      author: row.author as string,
+    };
+  }
+
+  async listFermentationProjects(
+    householdId: string,
+    status?: FermentationStatus,
+  ): Promise<FermentationProjectView[]> {
+    let query = this.userClient
+      .from("fermentation_projects")
+      .select(
+        "id, project_type, name, status, started_at, ended_at, current_stage, target_params, next_check_at, notes",
+      )
+      .eq("household_id", householdId)
+      .is("deleted_at", null);
+    query = status ? query.eq("status", status) : query.eq("status", "active");
+    const { data, error } = await query.order("started_at", { ascending: false });
+    if (error) throw mapDbError(error, "could not load fermentation projects");
+    return (data ?? []).map(SupabaseFoodieDb.fermentationProjectFromRow);
+  }
+
+  async getFermentationProject(
+    householdId: string,
+    projectId: string,
+  ): Promise<FermentationProjectDetail> {
+    const [projectResult, logsResult] = await Promise.all([
+      this.userClient
+        .from("fermentation_projects")
+        .select(
+          "id, project_type, name, status, started_at, ended_at, current_stage, target_params, next_check_at, notes",
+        )
+        .eq("id", projectId)
+        .eq("household_id", householdId)
+        .is("deleted_at", null)
+        .maybeSingle(),
+      this.userClient
+        .from("fermentation_logs")
+        .select("id, project_id, logged_at, log_type, payload, notes, author")
+        .eq("household_id", householdId)
+        .eq("project_id", projectId)
+        .order("logged_at", { ascending: false }),
+    ]);
+    if (projectResult.error) {
+      throw mapDbError(projectResult.error, "could not load the fermentation project");
+    }
+    if (!projectResult.data) {
+      throw new FoodieError("not_found", "fermentation project not found");
+    }
+    if (logsResult.error) {
+      throw mapDbError(logsResult.error, "could not load fermentation logs");
+    }
+    return {
+      project: SupabaseFoodieDb.fermentationProjectFromRow(projectResult.data),
+      logs: (logsResult.data ?? []).map(SupabaseFoodieDb.fermentationLogFromRow),
+    };
+  }
+
+  async logFermentationEvent(
+    householdId: string,
+    projectId: string,
+    logType: FermentationLogType,
+    payload?: Record<string, unknown>,
+    notes?: string,
+  ): Promise<FermentationLogView> {
+    const { data, error } = await this.userClient.rpc("foodie_log_fermentation_event", {
+      p_household: householdId,
+      p_project_id: projectId,
+      p_log_type: logType,
+      p_payload: payload ?? null,
+      p_notes: notes ?? null,
+    });
+    if (error) throw mapDbError(error, "could not log the fermentation event");
+    return SupabaseFoodieDb.fermentationLogFromRow(data);
+  }
+
+  async logSourdoughFeeding(
+    householdId: string,
+    projectId: string,
+    feeding: {
+      starterG: number;
+      flourG: number;
+      waterG: number;
+      flourType?: string;
+      discardG?: number;
+      notes?: string;
+    },
+  ): Promise<FermentationLogView> {
+    const { data, error } = await this.userClient.rpc("foodie_log_sourdough_feeding", {
+      p_household: householdId,
+      p_project_id: projectId,
+      p_starter_g: feeding.starterG,
+      p_flour_g: feeding.flourG,
+      p_water_g: feeding.waterG,
+      p_flour_type: feeding.flourType ?? null,
+      p_discard_g: feeding.discardG ?? null,
+      p_notes: feeding.notes ?? null,
+    });
+    if (error) throw mapDbError(error, "could not log the sourdough feeding");
+    return SupabaseFoodieDb.fermentationLogFromRow(data);
+  }
+
+  async updateFermentationStage(
+    householdId: string,
+    projectId: string,
+    update: {
+      currentStage?: string;
+      status?: FermentationStatus;
+      nextCheckAt?: string;
+      notes?: string;
+    },
+  ): Promise<FermentationProjectView> {
+    const { data, error } = await this.userClient.rpc("foodie_update_fermentation_stage", {
+      p_household: householdId,
+      p_project_id: projectId,
+      p_current_stage: update.currentStage ?? null,
+      p_status: update.status ?? null,
+      p_next_check_at: update.nextCheckAt ?? null,
+      p_notes: update.notes ?? null,
+    });
+    if (error) throw mapDbError(error, "could not update the fermentation project");
+    return SupabaseFoodieDb.fermentationProjectFromRow(data);
   }
 
   async getOrCreateConversation(
