@@ -9,9 +9,13 @@
 // Household Inventory phase adds:
 //   get_inventory, add_inventory_item, update_inventory_item,
 //   remove_inventory_item
+// Cleaning + Home Care phase adds:
+//   get_cleaning_status, complete_cleaning_task, skip_cleaning_task,
+//   get_filter_status, log_filter_replacement, get_maintenance_issues,
+//   report_maintenance_issue, resolve_maintenance_issue
 // Later streams REGISTER new tools here; nothing else widens agent access.
 
-import type { FoodieDb, ToolSpec } from "./types.ts";
+import type { FoodieDb, MaintenanceIssueStatus, ToolSpec } from "./types.ts";
 
 export type Validation =
   | { ok: true; value: Record<string, unknown> }
@@ -108,6 +112,7 @@ function optionalDate(
 }
 
 const SUPPLY_LEVELS = ["full", "good", "low", "almost_empty", "out"] as const;
+const MAINTENANCE_STATUSES = ["open", "in_progress", "resolved"] as const;
 
 function optionalEnum<T extends string>(
   obj: Record<string, unknown>,
@@ -461,8 +466,296 @@ const removeInventoryItem: ToolDefinition = {
   },
 };
 
-/** The Stream 3 registry, extended by the Household Inventory phase. Later
- * streams REGISTER new tools here; nothing else widens agent access. */
+const getCleaningStatus: ToolDefinition = {
+  spec: {
+    name: "get_cleaning_status",
+    description:
+      "Get the household's cleaning tasks: area, recurrence, who's assigned, " +
+      "supplies needed, when each is next due, whether it's overdue, and when " +
+      "it was last completed. Call this before completing or skipping a task " +
+      "to find its id.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  mutating: false,
+  validate: (input) => ({ ok: true, value: asObject(input) ?? {} }),
+  execute: async (ctx) => {
+    const status = await ctx.db.getCleaningStatus(ctx.householdId);
+    return { summary: "Read cleaning status", data: status };
+  },
+};
+
+const completeCleaningTask: ToolDefinition = {
+  spec: {
+    name: "complete_cleaning_task",
+    description:
+      "Mark ONE cleaning task as completed just now, found by its id (call " +
+      "get_cleaning_status first). Only report the task as done after this " +
+      "tool succeeds.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string", description: "The cleaning task's id, from get_cleaning_status" },
+        notes: { type: "string", description: "Optional note about the completion" },
+      },
+      required: ["task_id"],
+      additionalProperties: false,
+    },
+  },
+  mutating: true,
+  validate: (input) => {
+    const obj = asObject(input);
+    if (!obj) return { ok: false, error: "input must be an object" };
+    const taskId = requireString(obj, "task_id", 100);
+    if (isError(taskId)) return { ok: false, error: taskId.error };
+    const notes = optionalString(obj, "notes", 500);
+    if (isError(notes)) return { ok: false, error: notes.error };
+    const value: Record<string, unknown> = { taskId };
+    if (notes !== undefined) value.notes = notes;
+    return { ok: true, value };
+  },
+  execute: async (ctx, input) => {
+    const result = await ctx.db.completeCleaningTask(
+      ctx.householdId,
+      input.taskId as string,
+      input.notes as string | undefined,
+    );
+    return {
+      summary: `Marked "${result.taskName}" as completed`,
+      data: { completed: result },
+    };
+  },
+};
+
+const skipCleaningTask: ToolDefinition = {
+  spec: {
+    name: "skip_cleaning_task",
+    description:
+      "Mark ONE cleaning task as skipped for now, found by its id (call " +
+      "get_cleaning_status first). It will roll over to the household's next " +
+      "cleaning day. Only report the task as skipped after this tool succeeds.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string", description: "The cleaning task's id, from get_cleaning_status" },
+        reason: { type: "string", description: "Optional reason for skipping" },
+      },
+      required: ["task_id"],
+      additionalProperties: false,
+    },
+  },
+  mutating: true,
+  validate: (input) => {
+    const obj = asObject(input);
+    if (!obj) return { ok: false, error: "input must be an object" };
+    const taskId = requireString(obj, "task_id", 100);
+    if (isError(taskId)) return { ok: false, error: taskId.error };
+    const reason = optionalString(obj, "reason", 500);
+    if (isError(reason)) return { ok: false, error: reason.error };
+    const value: Record<string, unknown> = { taskId };
+    if (reason !== undefined) value.reason = reason;
+    return { ok: true, value };
+  },
+  execute: async (ctx, input) => {
+    const result = await ctx.db.skipCleaningTask(
+      ctx.householdId,
+      input.taskId as string,
+      input.reason as string | undefined,
+    );
+    return {
+      summary: `Marked "${result.taskName}" as skipped`,
+      data: { skipped: result },
+    };
+  },
+};
+
+const getFilterStatus: ToolDefinition = {
+  spec: {
+    name: "get_filter_status",
+    description:
+      "Get the household's tracked replaceable components (filters, batteries, " +
+      "cartridges, etc.): system, spares on hand, when each is next due for " +
+      "replacement, and whether it's overdue. Call this before logging a " +
+      "replacement to find its id.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  mutating: false,
+  validate: (input) => ({ ok: true, value: asObject(input) ?? {} }),
+  execute: async (ctx) => {
+    const status = await ctx.db.getFilterStatus(ctx.householdId);
+    return { summary: "Read filter/component status", data: status };
+  },
+};
+
+const logFilterReplacement: ToolDefinition = {
+  spec: {
+    name: "log_filter_replacement",
+    description:
+      "Log that ONE tracked component (filter, battery, cartridge, etc.) was " +
+      "just replaced, found by its id (call get_filter_status first). Reduces " +
+      "its spares count by one. Only report it as replaced after this tool " +
+      "succeeds.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        component_id: { type: "string", description: "The component's id, from get_filter_status" },
+        notes: { type: "string", description: "Optional note" },
+      },
+      required: ["component_id"],
+      additionalProperties: false,
+    },
+  },
+  mutating: true,
+  validate: (input) => {
+    const obj = asObject(input);
+    if (!obj) return { ok: false, error: "input must be an object" };
+    const componentId = requireString(obj, "component_id", 100);
+    if (isError(componentId)) return { ok: false, error: componentId.error };
+    const notes = optionalString(obj, "notes", 500);
+    if (isError(notes)) return { ok: false, error: notes.error };
+    const value: Record<string, unknown> = { componentId };
+    if (notes !== undefined) value.notes = notes;
+    return { ok: true, value };
+  },
+  execute: async (ctx, input) => {
+    const component = await ctx.db.logFilterReplacement(
+      ctx.householdId,
+      input.componentId as string,
+      input.notes as string | undefined,
+    );
+    return {
+      summary: `Logged replacement of "${component.componentName}" (${component.systemName})`,
+      data: { component },
+    };
+  },
+};
+
+const getMaintenanceIssues: ToolDefinition = {
+  spec: {
+    name: "get_maintenance_issues",
+    description:
+      "List the household's apartment maintenance issues/needs, optionally " +
+      "filtered by status. Call this before resolving an issue to find its id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          enum: [...MAINTENANCE_STATUSES],
+          description: "Optional filter: only issues in this status",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  mutating: false,
+  validate: (input) => {
+    const obj = asObject(input) ?? {};
+    const status = optionalEnum(obj, "status", MAINTENANCE_STATUSES);
+    if (isError(status)) return { ok: false, error: status.error };
+    const value: Record<string, unknown> = {};
+    if (status !== undefined) value.status = status;
+    return { ok: true, value };
+  },
+  execute: async (ctx, input) => {
+    const issues = await ctx.db.getMaintenanceIssues(
+      ctx.householdId,
+      input.status as MaintenanceIssueStatus | undefined,
+    );
+    return { summary: "Read maintenance issues", data: { issues } };
+  },
+};
+
+const reportMaintenanceIssue: ToolDefinition = {
+  spec: {
+    name: "report_maintenance_issue",
+    description:
+      "Report ONE new apartment maintenance issue or need (e.g. a leak, a " +
+      "broken appliance, something that needs fixing). Only report it as " +
+      "logged after this tool succeeds.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Short title, e.g. 'Leaky faucet'" },
+        area: { type: "string", description: "Optional area/room, e.g. 'Kitchen'" },
+        description: { type: "string", description: "Optional longer description" },
+      },
+      required: ["title"],
+      additionalProperties: false,
+    },
+  },
+  mutating: true,
+  validate: (input) => {
+    const obj = asObject(input);
+    if (!obj) return { ok: false, error: "input must be an object" };
+    const title = requireString(obj, "title", 200);
+    if (isError(title)) return { ok: false, error: title.error };
+    const area = optionalString(obj, "area", 100);
+    if (isError(area)) return { ok: false, error: area.error };
+    const description = optionalString(obj, "description", 2000);
+    if (isError(description)) return { ok: false, error: description.error };
+    const value: Record<string, unknown> = { title };
+    if (area !== undefined) value.area = area;
+    if (description !== undefined) value.description = description;
+    return { ok: true, value };
+  },
+  execute: async (ctx, input) => {
+    const issue = await ctx.db.reportMaintenanceIssue(ctx.householdId, {
+      title: input.title as string,
+      area: input.area as string | undefined,
+      description: input.description as string | undefined,
+    });
+    return {
+      summary: `Reported maintenance issue "${issue.title}"`,
+      data: { reported: issue },
+    };
+  },
+};
+
+const resolveMaintenanceIssue: ToolDefinition = {
+  spec: {
+    name: "resolve_maintenance_issue",
+    description:
+      "Mark ONE maintenance issue as resolved, found by its id (call " +
+      "get_maintenance_issues first). Only report it as resolved after this " +
+      "tool succeeds.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        issue_id: { type: "string", description: "The issue's id, from get_maintenance_issues" },
+        notes: { type: "string", description: "Optional resolution note" },
+      },
+      required: ["issue_id"],
+      additionalProperties: false,
+    },
+  },
+  mutating: true,
+  validate: (input) => {
+    const obj = asObject(input);
+    if (!obj) return { ok: false, error: "input must be an object" };
+    const issueId = requireString(obj, "issue_id", 100);
+    if (isError(issueId)) return { ok: false, error: issueId.error };
+    const notes = optionalString(obj, "notes", 500);
+    if (isError(notes)) return { ok: false, error: notes.error };
+    const value: Record<string, unknown> = { issueId };
+    if (notes !== undefined) value.notes = notes;
+    return { ok: true, value };
+  },
+  execute: async (ctx, input) => {
+    const issue = await ctx.db.resolveMaintenanceIssue(
+      ctx.householdId,
+      input.issueId as string,
+      input.notes as string | undefined,
+    );
+    return {
+      summary: `Resolved maintenance issue "${issue.title}"`,
+      data: { resolved: issue },
+    };
+  },
+};
+
+/** The Stream 3 registry, extended by the Household Inventory and Cleaning +
+ * Home Care phases. Later streams REGISTER new tools here; nothing else
+ * widens agent access. */
 export const toolRegistry: ReadonlyMap<string, ToolDefinition> = new Map(
   [
     getBasicHouseholdContext,
@@ -474,6 +767,14 @@ export const toolRegistry: ReadonlyMap<string, ToolDefinition> = new Map(
     addInventoryItem,
     updateInventoryItem,
     removeInventoryItem,
+    getCleaningStatus,
+    completeCleaningTask,
+    skipCleaningTask,
+    getFilterStatus,
+    logFilterReplacement,
+    getMaintenanceIssues,
+    reportMaintenanceIssue,
+    resolveMaintenanceIssue,
   ].map((tool) => [tool.spec.name, tool]),
 );
 

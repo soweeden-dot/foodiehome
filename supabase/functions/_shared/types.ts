@@ -151,6 +151,74 @@ export interface InventoryItemPatch {
   notes?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Cleaning + Home Care (Migration 15). Next-due dates are COMPUTED at read
+// time from recurrence.ts, never stored — see that module's header note.
+// ---------------------------------------------------------------------------
+
+export type CleaningOutcome = "completed" | "skipped";
+
+export interface RecurrenceSummary {
+  intervalUnit: "day" | "week" | "month" | "year";
+  intervalCount: number;
+  /** 0 = Sunday .. 6 = Saturday, or null for rules with no weekday anchor. */
+  weekday: number | null;
+}
+
+export interface CleaningTaskView {
+  id: string;
+  name: string;
+  area: string | null;
+  recurrence: RecurrenceSummary | null;
+  assignedUserName: string | null;
+  suppliesNeeded: string[];
+  /** Computed, ISO date — see computeCleaningDueDate. Null if the task has
+   * no recurrence rule configured (nothing to compute a due date from). */
+  nextDueOn: string | null;
+  overdue: boolean;
+  lastCompletedOn: string | null;
+}
+
+export interface CleaningStatusView {
+  tasks: CleaningTaskView[];
+}
+
+export interface CleaningCompletionRecord {
+  taskId: string;
+  taskName: string;
+  outcome: CleaningOutcome;
+  notes: string | null;
+}
+
+export interface TrackedComponentView {
+  id: string;
+  systemName: string;
+  componentName: string;
+  kind: string;
+  sparesCount: number;
+  /** Computed, ISO date — null when the component has no replace interval. */
+  nextDueOn: string | null;
+  overdue: boolean;
+  lastReplacedOn: string | null;
+}
+
+export interface FilterStatusView {
+  components: TrackedComponentView[];
+}
+
+export type MaintenanceIssueStatus = "open" | "in_progress" | "resolved";
+
+export interface MaintenanceIssueView {
+  id: string;
+  title: string;
+  area: string | null;
+  description: string | null;
+  status: MaintenanceIssueStatus;
+  reportedAt: string;
+  resolvedAt: string | null;
+  notes: string | null;
+}
+
 export type ActionStatus = "executed" | "failed";
 
 /** Intent-level audit entry (maps to the agent_actions table). */
@@ -198,6 +266,39 @@ export interface FoodieDb {
     patch: InventoryItemPatch,
   ): Promise<InventoryItemView>;
   removeInventoryItem(householdId: string, itemId: string): Promise<InventoryItemView>;
+
+  getCleaningStatus(householdId: string): Promise<CleaningStatusView>;
+  completeCleaningTask(
+    householdId: string,
+    taskId: string,
+    notes?: string,
+  ): Promise<CleaningCompletionRecord>;
+  skipCleaningTask(
+    householdId: string,
+    taskId: string,
+    reason?: string,
+  ): Promise<CleaningCompletionRecord>;
+
+  getFilterStatus(householdId: string): Promise<FilterStatusView>;
+  logFilterReplacement(
+    householdId: string,
+    componentId: string,
+    notes?: string,
+  ): Promise<TrackedComponentView>;
+
+  getMaintenanceIssues(
+    householdId: string,
+    status?: MaintenanceIssueStatus,
+  ): Promise<MaintenanceIssueView[]>;
+  reportMaintenanceIssue(
+    householdId: string,
+    issue: { title: string; area?: string; description?: string },
+  ): Promise<MaintenanceIssueView>;
+  resolveMaintenanceIssue(
+    householdId: string,
+    issueId: string,
+    notes?: string,
+  ): Promise<MaintenanceIssueView>;
 
   getOrCreateConversation(
     householdId: string,

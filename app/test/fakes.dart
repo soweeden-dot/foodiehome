@@ -3,8 +3,10 @@ import 'dart:async';
 import 'package:foodiehome/core/kitchen_mode.dart';
 import 'package:foodiehome/data/auth_gateway.dart';
 import 'package:foodiehome/data/foodie_gateway.dart';
+import 'package:foodiehome/data/home_care_gateway.dart';
 import 'package:foodiehome/data/household_gateway.dart';
 import 'package:foodiehome/data/inventory_gateway.dart';
+import 'package:foodiehome/domain/home_care.dart';
 import 'package:foodiehome/domain/household.dart';
 import 'package:foodiehome/domain/inventory.dart';
 
@@ -251,5 +253,122 @@ class FakeInventoryGateway implements InventoryGateway {
       throw StateError('inventory item not found');
     }
     items.removeWhere((i) => i.id == itemId);
+  }
+}
+
+class FakeHomeCareGateway implements HomeCareGateway {
+  final List<CleaningTask> cleaningTasks = [];
+  final List<TrackedComponent> trackedComponents = [];
+  final List<MaintenanceIssue> maintenanceIssues = [];
+  int idCounter = 0;
+  Object? failNextCall;
+
+  void _maybeThrow() {
+    final error = failNextCall;
+    if (error != null) {
+      failNextCall = null;
+      throw error;
+    }
+  }
+
+  @override
+  Future<List<CleaningTask>> fetchCleaningTasks(String householdId) async {
+    _maybeThrow();
+    return List.of(cleaningTasks);
+  }
+
+  @override
+  Future<void> completeCleaningTask(String householdId, String taskId, {String? notes}) async {
+    _maybeThrow();
+    final index = cleaningTasks.indexWhere((t) => t.id == taskId);
+    if (index == -1) throw StateError('cleaning task not found');
+    cleaningTasks[index] = CleaningTask(
+      id: cleaningTasks[index].id,
+      name: cleaningTasks[index].name,
+      area: cleaningTasks[index].area,
+      recurrence: cleaningTasks[index].recurrence,
+      assignedUserName: cleaningTasks[index].assignedUserName,
+      suppliesNeeded: cleaningTasks[index].suppliesNeeded,
+      lastCompletedOn: DateTime.now(),
+    );
+  }
+
+  @override
+  Future<void> skipCleaningTask(String householdId, String taskId, {String? reason}) async {
+    _maybeThrow();
+    if (!cleaningTasks.any((t) => t.id == taskId)) {
+      throw StateError('cleaning task not found');
+    }
+  }
+
+  @override
+  Future<List<TrackedComponent>> fetchTrackedComponents(String householdId) async {
+    _maybeThrow();
+    return List.of(trackedComponents);
+  }
+
+  @override
+  Future<void> logFilterReplacement(String householdId, String componentId, {String? notes}) async {
+    _maybeThrow();
+    final index = trackedComponents.indexWhere((c) => c.id == componentId);
+    if (index == -1) throw StateError('tracked component not found');
+    final current = trackedComponents[index];
+    trackedComponents[index] = TrackedComponent(
+      id: current.id,
+      systemName: current.systemName,
+      componentName: current.componentName,
+      kind: current.kind,
+      installedOn: current.installedOn,
+      replaceIntervalDays: current.replaceIntervalDays,
+      sparesCount: (current.sparesCount - 1).clamp(0, 1 << 30),
+      lastReplacedOn: DateTime.now(),
+    );
+  }
+
+  @override
+  Future<List<MaintenanceIssue>> fetchMaintenanceIssues(
+    String householdId, {
+    MaintenanceIssueStatus? status,
+  }) async {
+    _maybeThrow();
+    return maintenanceIssues.where((i) => status == null || i.status == status).toList();
+  }
+
+  @override
+  Future<MaintenanceIssue> reportMaintenanceIssue(
+    String householdId, {
+    required String title,
+    String? area,
+    String? description,
+  }) async {
+    _maybeThrow();
+    final issue = MaintenanceIssue(
+      id: 'issue-${++idCounter}',
+      title: title,
+      area: area,
+      description: description,
+      status: MaintenanceIssueStatus.open,
+      reportedAt: DateTime.now(),
+    );
+    maintenanceIssues.add(issue);
+    return issue;
+  }
+
+  @override
+  Future<void> resolveMaintenanceIssue(String householdId, String issueId, {String? notes}) async {
+    _maybeThrow();
+    final index = maintenanceIssues.indexWhere((i) => i.id == issueId);
+    if (index == -1) throw StateError('maintenance issue not found');
+    final current = maintenanceIssues[index];
+    maintenanceIssues[index] = MaintenanceIssue(
+      id: current.id,
+      title: current.title,
+      area: current.area,
+      description: current.description,
+      status: MaintenanceIssueStatus.resolved,
+      reportedAt: current.reportedAt,
+      resolvedAt: DateTime.now(),
+      notes: notes ?? current.notes,
+    );
   }
 }

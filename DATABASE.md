@@ -203,6 +203,29 @@ No table changes — `inventory_locations`, `food_items`, and `inventory_items` 
 | `foodie_update_inventory_item(...)` | Partial update via `COALESCE` — **an omitted parameter means "leave unchanged," not "clear it."** This RPC cannot explicitly null out a previously-set field in this phase; a dedicated clear affordance is deferred. Raises `P0008` (`not found`, a new error code) if the item doesn't exist or belongs to a different household. |
 | `foodie_remove_inventory_item(...)` | Soft-deletes (`deleted_at = now()`), same `P0008` on a missing item. A distinct function/tool from update, not a flag on it — see `docs/FOODIE.md` for the reasoning. |
 
+### Home Care RPCs (`20260808240000_foodie_home_care_rpcs.sql`) — Cleaning + Home Care phase
+
+Uses `cleaning_tasks`/`cleaning_completions`/`tracked_components`/`component_replacements` exactly as designed in migrations 04/06/07 — next-due is **computed**, never stored (see §8). Three additive schema changes, no redesign:
+
+| Change | Purpose |
+|---|---|
+| `cleaning_completions.outcome` (enum `completed`\|`skipped`) | One append-only stream now covers both completions *and* explicit skips, same pattern as `fermentation_logs`. |
+| `cleaning_tasks.supplies_needed` (`text[]`) | Optional free-text supply hints (e.g. `{'glass cleaner', 'sponge'}`). |
+| `maintenance_issues` (new table: `title`, `area`, `description`, `status` enum `open`\|`in_progress`\|`resolved`, `reported_by`, `reported_at`, `resolved_at`, `notes`) | One-off apartment needs/issues — not recurring (unlike `cleaning_tasks`) and not interval-based (unlike `tracked_components`). Standard member RLS + audit trigger. |
+| `reminder_event_type` gains `'cleaning_task_due'` | Forward-compatible only — no `reminder_rules` row references it yet and no worker consumes it; structures for the future combined Katie + Atlas + Foodie morning message without building delivery. |
+
+"Twice weekly: Wednesday + Sunday" needed **no schema change** — it's modeled as two independent `recurrence_rules` + `cleaning_tasks` rows (one Wednesday-anchored, one Sunday-anchored), each with its own completion/skip history. See `docs/DECISIONS.md`.
+
+Five write RPCs, same SECURITY INVOKER + validated + `app.action_source='foodie'` pattern, continuing the `P000x` error sequence (`P0006` not a member, `P0007` invalid argument, `P0008` not found):
+
+| Function | Purpose |
+|---|---|
+| `foodie_complete_cleaning_task(...)` | Inserts a `cleaning_completions` row with `outcome='completed'`, snapshotting the task's current `checklist`. `P0008` if the task doesn't exist/isn't active/belongs to another household. |
+| `foodie_skip_cleaning_task(...)` | Same validation; inserts with `outcome='skipped'` — no completion row is created. |
+| `foodie_log_filter_replacement(...)` | Inserts a `component_replacements` row, then decrements `tracked_components.spares_count` (floored at 0). `P0008` if the component doesn't exist. |
+| `foodie_report_maintenance_issue(...)` | Validates a non-empty, ≤200-char title (`P0007`); inserts with `status='open'`, `reported_by=auth.uid()`. |
+| `foodie_resolve_maintenance_issue(...)` | Sets `status='resolved'`, `resolved_at=now()`, optionally updates `notes`. `P0008` if not found. |
+
 ## 4. Relationship map (condensed)
 
 ```
@@ -295,6 +318,7 @@ Exceptions to the standard policy:
 - `deleted_at` soft deletes → deletions propagate like any other update.
 - Append-only streams (logs, completions, replacements) → conflict-free by construction.
 - `record_history` captures overwrites → LWW conflict losers are never silently unrecoverable.
+- Cleaning/component due dates are **computed at read time** (from the last completion/replacement + the `recurrence_rules` row), never persisted as occurrence rows — nothing to keep in sync across devices or with a future notification worker. Reimplemented per-runtime: `supabase/functions/_shared/recurrence.ts` (Edge Function tools) and `app/lib/domain/recurrence.dart` (Flutter UI), same algorithm.
 
 ## 9. Validation
 
@@ -306,10 +330,11 @@ Exceptions to the standard policy:
 - `membership_test.sql` — invite redemption/rotation, leave, last-admin protection, provenance on direct vs. RPC-driven edits.
 - `foodie_test.sql` — memory RPCs, grocery RPC, household-scope rejection, conversation/memory separation, agent-audit append-only enforcement.
 - `inventory_test.sql` — location auto-create and case-insensitive reuse, argument validation, partial-update (`COALESCE`) semantics, `P0008` not-found on update/double-remove, household-scope rejection.
+- `home_care_test.sql` — cleaning task completion (checklist snapshot, `foodie` provenance) and skip (separate outcome, no accidental completion row), `P0008` on a missing task, filter replacement (history row + spares decrement floored at 0), maintenance issue report/resolve/`P0008`/`P0007`, household-scope rejection.
 
 **`foodie_coexistence_test`** — proves the schema-isolation guarantee concretely, not just by inspection:
 - `keep_track_stub.sql` — simulates Keep Track's pre-existing `public` footprint (a `profiles` table, a `set_updated_at()` function, and an `auth.users` provisioning trigger — the two collision candidates identified during design, plus the standard shared-table pattern), applied **before** any Foodie migration.
-- `coexistence_test.sql` — applied after all 14 Foodie migrations; asserts Keep Track's simulated table/function are byte-for-byte unchanged (including the function *body*, not just its existence — `CREATE OR REPLACE FUNCTION` overwrites silently with no error, so existence alone wouldn't catch that failure mode), both `auth.users` triggers fire independently on a real signup, no Foodie table or function exists anywhere under `public`, and all 33 expected tables exist in `foodie`.
+- `coexistence_test.sql` — applied after all 15 Foodie migrations; asserts Keep Track's simulated table/function are byte-for-byte unchanged (including the function *body*, not just its existence — `CREATE OR REPLACE FUNCTION` overwrites silently with no error, so existence alone wouldn't catch that failure mode), both `auth.users` triggers fire independently on a real signup, no Foodie table or function exists anywhere under `public`, and all 34 expected tables exist in `foodie`.
 
 Kept in separate databases because `coexistence_test.sql`'s extra signup would otherwise throw off the exact user/profile counts the functional tests assert.
 

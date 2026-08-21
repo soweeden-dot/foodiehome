@@ -5,6 +5,10 @@
 import type {
   AgentActionRecord,
   BasicHouseholdContext,
+  CleaningCompletionRecord,
+  CleaningStatusView,
+  CleaningTaskView,
+  FilterStatusView,
   FoodieDb,
   GroceryItemView,
   GroceryListView,
@@ -13,14 +17,54 @@ import type {
   InventoryItemView,
   InventoryLocationView,
   InventoryView,
+  MaintenanceIssueStatus,
+  MaintenanceIssueView,
   MemoryCategory,
   MemoryView,
   ModelProvider,
   NewInventoryItem,
   ProviderRequest,
   ProviderTurn,
+  RecurrenceSummary,
+  TrackedComponentView,
 } from "../_shared/types.ts";
 import { FoodieError } from "../_shared/types.ts";
+import { computeCleaningDueDate, computeComponentDueDate, isOverdue } from "../_shared/recurrence.ts";
+
+interface FakeCleaningTask {
+  id: string;
+  name: string;
+  area: string | null;
+  rule: RecurrenceSummary | null;
+  assignedUserName: string | null;
+  suppliesNeeded: string[];
+  lastCompletedOn: string | null;
+  deleted: boolean;
+}
+
+interface FakeComponent {
+  id: string;
+  systemName: string;
+  componentName: string;
+  kind: string;
+  installedOn: string | null;
+  replaceIntervalDays: number | null;
+  sparesCount: number;
+  lastReplacedOn: string | null;
+  deleted: boolean;
+}
+
+interface FakeMaintenanceIssue {
+  id: string;
+  title: string;
+  area: string | null;
+  description: string | null;
+  status: MaintenanceIssueStatus;
+  reportedAt: string;
+  resolvedAt: string | null;
+  notes: string | null;
+  deleted: boolean;
+}
 
 export class FakeDb implements FoodieDb {
   membership: { householdId: string } | null = { householdId: "hh-1" };
@@ -41,8 +85,12 @@ export class FakeDb implements FoodieDb {
   // deleted items stay in the array with deleted=true, mirroring the real
   // soft-delete schema, and are filtered out of getInventory/lookups.
   inventoryItems: Array<InventoryItemView & { deleted: boolean }> = [];
+  cleaningTasks: FakeCleaningTask[] = [];
+  trackedComponents: FakeComponent[] = [];
+  maintenanceIssues: FakeMaintenanceIssue[] = [];
   private conversationCounter = 0;
   private inventoryCounter = 0;
+  private maintenanceCounter = 0;
 
   getMembership(): Promise<{ householdId: string } | null> {
     return Promise.resolve(this.membership);
@@ -174,6 +222,179 @@ export class FakeDb implements FoodieDb {
     }
     item.deleted = true;
     const { deleted: _d, ...result } = item;
+    return Promise.resolve(result);
+  }
+
+  getCleaningStatus(_householdId: string): Promise<CleaningStatusView> {
+    const today = new Date();
+    const tasks: CleaningTaskView[] = this.cleaningTasks
+      .filter((t) => !t.deleted)
+      .map((t) => {
+        let nextDueOn: string | null = null;
+        if (t.rule) {
+          const due = computeCleaningDueDate({
+            rule: { ...t.rule, anchorDate: null },
+            lastCompletedOn: t.lastCompletedOn,
+            today,
+          });
+          nextDueOn = due.toISOString().slice(0, 10);
+        }
+        return {
+          id: t.id,
+          name: t.name,
+          area: t.area,
+          recurrence: t.rule,
+          assignedUserName: t.assignedUserName,
+          suppliesNeeded: t.suppliesNeeded,
+          nextDueOn,
+          overdue: nextDueOn !== null && isOverdue(new Date(nextDueOn), today),
+          lastCompletedOn: t.lastCompletedOn,
+        };
+      });
+    return Promise.resolve({ tasks });
+  }
+
+  private findCleaningTask(taskId: string): FakeCleaningTask {
+    const task = this.cleaningTasks.find((t) => t.id === taskId && !t.deleted);
+    if (!task) throw new FoodieError("not_found", "cleaning task not found");
+    return task;
+  }
+
+  completeCleaningTask(
+    _householdId: string,
+    taskId: string,
+    notes?: string,
+  ): Promise<CleaningCompletionRecord> {
+    let task: FakeCleaningTask;
+    try {
+      task = this.findCleaningTask(taskId);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    task.lastCompletedOn = new Date().toISOString().slice(0, 10);
+    return Promise.resolve({
+      taskId: task.id,
+      taskName: task.name,
+      outcome: "completed",
+      notes: notes ?? null,
+    });
+  }
+
+  skipCleaningTask(
+    _householdId: string,
+    taskId: string,
+    reason?: string,
+  ): Promise<CleaningCompletionRecord> {
+    let task: FakeCleaningTask;
+    try {
+      task = this.findCleaningTask(taskId);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return Promise.resolve({
+      taskId: task.id,
+      taskName: task.name,
+      outcome: "skipped",
+      notes: reason ?? null,
+    });
+  }
+
+  getFilterStatus(_householdId: string): Promise<FilterStatusView> {
+    const today = new Date();
+    const components: TrackedComponentView[] = this.trackedComponents
+      .filter((c) => !c.deleted)
+      .map((c) => {
+        const due = computeComponentDueDate({
+          replaceIntervalDays: c.replaceIntervalDays,
+          lastReplacedOn: c.lastReplacedOn,
+          installedOn: c.installedOn,
+        });
+        const nextDueOn = due ? due.toISOString().slice(0, 10) : null;
+        return {
+          id: c.id,
+          systemName: c.systemName,
+          componentName: c.componentName,
+          kind: c.kind,
+          sparesCount: c.sparesCount,
+          nextDueOn,
+          overdue: nextDueOn !== null && isOverdue(new Date(nextDueOn), today),
+          lastReplacedOn: c.lastReplacedOn,
+        };
+      });
+    return Promise.resolve({ components });
+  }
+
+  logFilterReplacement(
+    _householdId: string,
+    componentId: string,
+    _notes?: string,
+  ): Promise<TrackedComponentView> {
+    const component = this.trackedComponents.find((c) => c.id === componentId && !c.deleted);
+    if (!component) {
+      return Promise.reject(new FoodieError("not_found", "tracked component not found"));
+    }
+    component.lastReplacedOn = new Date().toISOString().slice(0, 10);
+    component.sparesCount = Math.max(component.sparesCount - 1, 0);
+    const due = computeComponentDueDate({
+      replaceIntervalDays: component.replaceIntervalDays,
+      lastReplacedOn: component.lastReplacedOn,
+      installedOn: component.installedOn,
+    });
+    return Promise.resolve({
+      id: component.id,
+      systemName: component.systemName,
+      componentName: component.componentName,
+      kind: component.kind,
+      sparesCount: component.sparesCount,
+      nextDueOn: due ? due.toISOString().slice(0, 10) : null,
+      overdue: false,
+      lastReplacedOn: component.lastReplacedOn,
+    });
+  }
+
+  getMaintenanceIssues(
+    _householdId: string,
+    status?: MaintenanceIssueStatus,
+  ): Promise<MaintenanceIssueView[]> {
+    const issues = this.maintenanceIssues
+      .filter((i) => !i.deleted && (status === undefined || i.status === status))
+      .map(({ deleted: _d, ...view }) => view);
+    return Promise.resolve(issues);
+  }
+
+  reportMaintenanceIssue(
+    _householdId: string,
+    issue: { title: string; area?: string; description?: string },
+  ): Promise<MaintenanceIssueView> {
+    const view: FakeMaintenanceIssue = {
+      id: `issue-${++this.maintenanceCounter}`,
+      title: issue.title,
+      area: issue.area ?? null,
+      description: issue.description ?? null,
+      status: "open",
+      reportedAt: new Date().toISOString(),
+      resolvedAt: null,
+      notes: null,
+      deleted: false,
+    };
+    this.maintenanceIssues.push(view);
+    const { deleted: _d, ...result } = view;
+    return Promise.resolve(result);
+  }
+
+  resolveMaintenanceIssue(
+    _householdId: string,
+    issueId: string,
+    notes?: string,
+  ): Promise<MaintenanceIssueView> {
+    const issue = this.maintenanceIssues.find((i) => i.id === issueId && !i.deleted);
+    if (!issue) {
+      return Promise.reject(new FoodieError("not_found", "maintenance issue not found"));
+    }
+    issue.status = "resolved";
+    issue.resolvedAt = new Date().toISOString();
+    if (notes !== undefined) issue.notes = notes;
+    const { deleted: _d, ...result } = issue;
     return Promise.resolve(result);
   }
 

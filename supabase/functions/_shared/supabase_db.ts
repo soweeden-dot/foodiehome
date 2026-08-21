@@ -24,6 +24,10 @@ import {
   FoodieError,
   type AgentActionRecord,
   type BasicHouseholdContext,
+  type CleaningCompletionRecord,
+  type CleaningStatusView,
+  type CleaningTaskView,
+  type FilterStatusView,
   type FoodieDb,
   type GroceryItemView,
   type GroceryListView,
@@ -32,10 +36,14 @@ import {
   type InventoryItemView,
   type InventoryView,
   type InventoryLocationView,
+  type MaintenanceIssueStatus,
+  type MaintenanceIssueView,
   type MemoryCategory,
   type MemoryView,
   type NewInventoryItem,
+  type TrackedComponentView,
 } from "./types.ts";
+import { computeCleaningDueDate, computeComponentDueDate, isOverdue } from "./recurrence.ts";
 
 // supabase-js's SupabaseClient type is generic over the active schema
 // (5th type param). Both clients passed in here are constructed with
@@ -316,6 +324,281 @@ export class SupabaseFoodieDb implements FoodieDb {
       .eq("id", locationId)
       .maybeSingle();
     return (data?.name as string | undefined) ?? null;
+  }
+
+  async getCleaningStatus(householdId: string): Promise<CleaningStatusView> {
+    const [tasksResult, completionsResult] = await Promise.all([
+      this.userClient
+        .from("cleaning_tasks")
+        .select(
+          "id, name, area, supplies_needed, recurrence_rules(interval_unit, interval_count, weekday, anchor_date), profiles(display_name)",
+        )
+        .eq("household_id", householdId)
+        .eq("is_active", true)
+        .is("deleted_at", null)
+        .order("created_at"),
+      this.userClient
+        .from("cleaning_completions")
+        .select("task_id, completed_at")
+        .eq("household_id", householdId)
+        .eq("outcome", "completed")
+        .order("completed_at", { ascending: false }),
+    ]);
+    if (tasksResult.error) throw mapDbError(tasksResult.error, "could not load cleaning tasks");
+    if (completionsResult.error) {
+      throw mapDbError(completionsResult.error, "could not load cleaning history");
+    }
+
+    const lastCompletedByTask = new Map<string, string>();
+    for (const row of completionsResult.data ?? []) {
+      const taskId = row.task_id as string;
+      if (!lastCompletedByTask.has(taskId)) {
+        lastCompletedByTask.set(taskId, (row.completed_at as string).slice(0, 10));
+      }
+    }
+
+    const today = new Date();
+    const tasks = (tasksResult.data ?? []).map((row: Record<string, unknown>): CleaningTaskView => {
+      const rule = row.recurrence_rules as {
+        interval_unit: "day" | "week" | "month" | "year";
+        interval_count: number;
+        weekday: number | null;
+        anchor_date: string | null;
+      } | null;
+      const lastCompletedOn = lastCompletedByTask.get(row.id as string) ?? null;
+      let nextDueOn: string | null = null;
+      if (rule) {
+        const due = computeCleaningDueDate({
+          rule: {
+            intervalUnit: rule.interval_unit,
+            intervalCount: rule.interval_count,
+            weekday: rule.weekday,
+            anchorDate: rule.anchor_date,
+          },
+          lastCompletedOn,
+          today,
+        });
+        nextDueOn = due.toISOString().slice(0, 10);
+      }
+      return {
+        id: row.id as string,
+        name: row.name as string,
+        area: row.area as string | null,
+        recurrence: rule
+          ? { intervalUnit: rule.interval_unit, intervalCount: rule.interval_count, weekday: rule.weekday }
+          : null,
+        assignedUserName: (row.profiles as { display_name?: string } | null)?.display_name ?? null,
+        suppliesNeeded: (row.supplies_needed as string[] | null) ?? [],
+        nextDueOn,
+        overdue: nextDueOn !== null && isOverdue(new Date(nextDueOn), today),
+        lastCompletedOn,
+      };
+    });
+    return { tasks };
+  }
+
+  async completeCleaningTask(
+    householdId: string,
+    taskId: string,
+    notes?: string,
+  ): Promise<CleaningCompletionRecord> {
+    const { data, error } = await this.userClient.rpc("foodie_complete_cleaning_task", {
+      p_household: householdId,
+      p_task_id: taskId,
+      p_notes: notes ?? null,
+    });
+    if (error) throw mapDbError(error, "could not complete the cleaning task");
+    const taskName = await this.resolveCleaningTaskName(taskId);
+    return {
+      taskId,
+      taskName,
+      outcome: data.outcome as CleaningCompletionRecord["outcome"],
+      notes: data.notes as string | null,
+    };
+  }
+
+  async skipCleaningTask(
+    householdId: string,
+    taskId: string,
+    reason?: string,
+  ): Promise<CleaningCompletionRecord> {
+    const { data, error } = await this.userClient.rpc("foodie_skip_cleaning_task", {
+      p_household: householdId,
+      p_task_id: taskId,
+      p_reason: reason ?? null,
+    });
+    if (error) throw mapDbError(error, "could not skip the cleaning task");
+    const taskName = await this.resolveCleaningTaskName(taskId);
+    return {
+      taskId,
+      taskName,
+      outcome: data.outcome as CleaningCompletionRecord["outcome"],
+      notes: data.notes as string | null,
+    };
+  }
+
+  private async resolveCleaningTaskName(taskId: string): Promise<string> {
+    const { data } = await this.userClient
+      .from("cleaning_tasks")
+      .select("name")
+      .eq("id", taskId)
+      .maybeSingle();
+    return (data?.name as string | undefined) ?? "(unknown task)";
+  }
+
+  async getFilterStatus(householdId: string): Promise<FilterStatusView> {
+    const [componentsResult, replacementsResult] = await Promise.all([
+      this.userClient
+        .from("tracked_components")
+        .select("id, system_name, component_name, kind, installed_on, replace_interval_days, spares_count")
+        .eq("household_id", householdId)
+        .is("deleted_at", null)
+        .order("system_name"),
+      this.userClient
+        .from("component_replacements")
+        .select("component_id, replaced_on")
+        .eq("household_id", householdId)
+        .order("replaced_on", { ascending: false }),
+    ]);
+    if (componentsResult.error) {
+      throw mapDbError(componentsResult.error, "could not load tracked components");
+    }
+    if (replacementsResult.error) {
+      throw mapDbError(replacementsResult.error, "could not load replacement history");
+    }
+
+    const lastReplacedByComponent = new Map<string, string>();
+    for (const row of replacementsResult.data ?? []) {
+      const componentId = row.component_id as string;
+      if (!lastReplacedByComponent.has(componentId)) {
+        lastReplacedByComponent.set(componentId, row.replaced_on as string);
+      }
+    }
+
+    const today = new Date();
+    const components = (componentsResult.data ?? []).map((row): TrackedComponentView => {
+      const lastReplacedOn = lastReplacedByComponent.get(row.id as string) ?? null;
+      const due = computeComponentDueDate({
+        replaceIntervalDays: row.replace_interval_days as number | null,
+        lastReplacedOn,
+        installedOn: row.installed_on as string | null,
+      });
+      const nextDueOn = due ? due.toISOString().slice(0, 10) : null;
+      return {
+        id: row.id as string,
+        systemName: row.system_name as string,
+        componentName: row.component_name as string,
+        kind: row.kind as string,
+        sparesCount: row.spares_count as number,
+        nextDueOn,
+        overdue: nextDueOn !== null && isOverdue(new Date(nextDueOn), today),
+        lastReplacedOn,
+      };
+    });
+    return { components };
+  }
+
+  async logFilterReplacement(
+    householdId: string,
+    componentId: string,
+    notes?: string,
+  ): Promise<TrackedComponentView> {
+    const { error } = await this.userClient.rpc("foodie_log_filter_replacement", {
+      p_household: householdId,
+      p_component_id: componentId,
+      p_notes: notes ?? null,
+    });
+    if (error) throw mapDbError(error, "could not log the filter replacement");
+    const { data: component, error: componentError } = await this.userClient
+      .from("tracked_components")
+      .select("id, system_name, component_name, kind, installed_on, replace_interval_days, spares_count")
+      .eq("id", componentId)
+      .single();
+    if (componentError) {
+      throw mapDbError(componentError, "could not reload the tracked component");
+    }
+    const due = computeComponentDueDate({
+      replaceIntervalDays: component.replace_interval_days as number | null,
+      lastReplacedOn: new Date().toISOString().slice(0, 10),
+      installedOn: component.installed_on as string | null,
+    });
+    const nextDueOn = due ? due.toISOString().slice(0, 10) : null;
+    return {
+      id: component.id as string,
+      systemName: component.system_name as string,
+      componentName: component.component_name as string,
+      kind: component.kind as string,
+      sparesCount: component.spares_count as number,
+      nextDueOn,
+      overdue: false,
+      lastReplacedOn: new Date().toISOString().slice(0, 10),
+    };
+  }
+
+  async getMaintenanceIssues(
+    householdId: string,
+    status?: MaintenanceIssueStatus,
+  ): Promise<MaintenanceIssueView[]> {
+    let query = this.userClient
+      .from("maintenance_issues")
+      .select("id, title, area, description, status, reported_at, resolved_at, notes")
+      .eq("household_id", householdId)
+      .is("deleted_at", null)
+      .order("reported_at", { ascending: false });
+    if (status) query = query.eq("status", status);
+    const { data, error } = await query;
+    if (error) throw mapDbError(error, "could not load maintenance issues");
+    return (data ?? []).map((row): MaintenanceIssueView => ({
+      id: row.id as string,
+      title: row.title as string,
+      area: row.area as string | null,
+      description: row.description as string | null,
+      status: row.status as MaintenanceIssueStatus,
+      reportedAt: row.reported_at as string,
+      resolvedAt: row.resolved_at as string | null,
+      notes: row.notes as string | null,
+    }));
+  }
+
+  async reportMaintenanceIssue(
+    householdId: string,
+    issue: { title: string; area?: string; description?: string },
+  ): Promise<MaintenanceIssueView> {
+    const { data, error } = await this.userClient.rpc("foodie_report_maintenance_issue", {
+      p_household: householdId,
+      p_title: issue.title,
+      p_area: issue.area ?? null,
+      p_description: issue.description ?? null,
+    });
+    if (error) throw mapDbError(error, "could not report the maintenance issue");
+    return SupabaseFoodieDb.maintenanceIssueFromRow(data);
+  }
+
+  async resolveMaintenanceIssue(
+    householdId: string,
+    issueId: string,
+    notes?: string,
+  ): Promise<MaintenanceIssueView> {
+    const { data, error } = await this.userClient.rpc("foodie_resolve_maintenance_issue", {
+      p_household: householdId,
+      p_issue_id: issueId,
+      p_notes: notes ?? null,
+    });
+    if (error) throw mapDbError(error, "could not resolve the maintenance issue");
+    return SupabaseFoodieDb.maintenanceIssueFromRow(data);
+  }
+
+  private static maintenanceIssueFromRow(row: Record<string, unknown>): MaintenanceIssueView {
+    return {
+      id: row.id as string,
+      title: row.title as string,
+      area: row.area as string | null,
+      description: row.description as string | null,
+      status: row.status as MaintenanceIssueStatus,
+      reportedAt: row.reported_at as string,
+      resolvedAt: row.resolved_at as string | null,
+      notes: row.notes as string | null,
+    };
   }
 
   async getOrCreateConversation(

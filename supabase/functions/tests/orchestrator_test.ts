@@ -279,6 +279,156 @@ Deno.test("update_inventory_item on an unknown id fails cleanly, nothing invente
   assertEquals(db.actions[0].status, "failed");
 });
 
+Deno.test("complete_cleaning_task executes and is audited", async () => {
+  const db = new FakeDb();
+  db.cleaningTasks.push({
+    id: "task-1",
+    name: "Clean bathroom",
+    area: "Bathroom",
+    rule: { intervalUnit: "week", intervalCount: 1, weekday: 0 },
+    assignedUserName: null,
+    suppliesNeeded: ["glass cleaner"],
+    lastCompletedOn: null,
+    deleted: false,
+  });
+  const provider = new FakeProvider([
+    {
+      text: "",
+      toolCalls: [{
+        id: "t1",
+        name: "complete_cleaning_task",
+        input: { task_id: "task-1", notes: "done, sparkling" },
+      }],
+    },
+    { text: "Marked the bathroom as cleaned.", toolCalls: [] },
+  ]);
+
+  const reply = await runFoodieTurn({ db, provider }, turnInput("I cleaned the bathroom"));
+
+  assert(db.cleaningTasks[0].lastCompletedOn !== null);
+  assertEquals(reply.actions, [
+    { tool: "complete_cleaning_task", status: "executed", summary: 'Marked "Clean bathroom" as completed' },
+  ]);
+  assertEquals(db.actions[0].status, "executed");
+});
+
+Deno.test(
+  "get_cleaning_status rolls an overdue Wednesday-only task to the household's cleaning days",
+  async () => {
+    const db = new FakeDb();
+    db.cleaningTasks.push({
+      id: "task-1",
+      name: "Vacuum living room",
+      area: "Living room",
+      rule: { intervalUnit: "week", intervalCount: 1, weekday: 3 }, // Wednesday
+      assignedUserName: null,
+      suppliesNeeded: [],
+      lastCompletedOn: "2026-07-15", // long enough ago that the theoretical due date has passed
+      deleted: false,
+    });
+    const provider = new FakeProvider([
+      { text: "", toolCalls: [{ id: "t1", name: "get_cleaning_status", input: {} }] },
+      { text: "Vacuuming is overdue.", toolCalls: [] },
+    ]);
+
+    await runFoodieTurn({ db, provider }, turnInput("what needs cleaning?"));
+
+    const toolResults = provider.requests[1].messages.at(-1)!;
+    assert(toolResults.role === "tool_results");
+    const payload = toolResults.results[0].payload as {
+      result: { tasks: Array<{ overdue: boolean; nextDueOn: string | null }> };
+    };
+    const task = payload.result.tasks[0];
+    // Rollover resolves the due date to today-or-later on one of the
+    // household's cleaning days, so it's no longer "overdue" by the time
+    // it's reported — that's the point of rolling it forward.
+    assert(task.nextDueOn !== null);
+    assertEquals(task.overdue, false);
+    const dueDate = new Date(`${task.nextDueOn}T00:00:00Z`);
+    assert(dueDate.getTime() >= new Date(new Date().toDateString()).getTime());
+    assert([0, 3].includes(dueDate.getUTCDay())); // Sunday or Wednesday
+  },
+);
+
+Deno.test("log_filter_replacement decrements spares and is audited", async () => {
+  const db = new FakeDb();
+  db.trackedComponents.push({
+    id: "comp-1",
+    systemName: "Kitchen fridge",
+    componentName: "Water filter",
+    kind: "filter",
+    installedOn: "2026-01-01",
+    replaceIntervalDays: 90,
+    sparesCount: 1,
+    lastReplacedOn: null,
+    deleted: false,
+  });
+  const provider = new FakeProvider([
+    {
+      text: "",
+      toolCalls: [{
+        id: "t1",
+        name: "log_filter_replacement",
+        input: { component_id: "comp-1", notes: "new cartridge" },
+      }],
+    },
+    { text: "Logged the filter replacement.", toolCalls: [] },
+  ]);
+
+  const reply = await runFoodieTurn({ db, provider }, turnInput("I replaced the water filter"));
+
+  assertEquals(db.trackedComponents[0].sparesCount, 0);
+  assertEquals(reply.actions, [
+    {
+      tool: "log_filter_replacement",
+      status: "executed",
+      summary: 'Logged replacement of "Water filter" (Kitchen fridge)',
+    },
+  ]);
+});
+
+Deno.test("report then resolve a maintenance issue", async () => {
+  const db = new FakeDb();
+  const provider = new FakeProvider([
+    {
+      text: "",
+      toolCalls: [{
+        id: "t1",
+        name: "report_maintenance_issue",
+        input: { title: "Leaky faucet", area: "Kitchen", description: "drips constantly" },
+      }],
+    },
+    { text: "Reported the leaky faucet.", toolCalls: [] },
+  ]);
+
+  await runFoodieTurn({ db, provider }, turnInput("the kitchen faucet is leaking"));
+  assertEquals(db.maintenanceIssues.length, 1);
+  assertEquals(db.maintenanceIssues[0].status, "open");
+
+  const issueId = db.maintenanceIssues[0].id;
+  const provider2 = new FakeProvider([
+    {
+      text: "",
+      toolCalls: [{
+        id: "t2",
+        name: "resolve_maintenance_issue",
+        input: { issue_id: issueId, notes: "plumber fixed it" },
+      }],
+    },
+    { text: "Marked the faucet issue resolved.", toolCalls: [] },
+  ]);
+  const reply = await runFoodieTurn({ db, provider: provider2 }, turnInput("the plumber fixed the faucet"));
+
+  assertEquals(db.maintenanceIssues[0].status, "resolved");
+  assertEquals(reply.actions, [
+    {
+      tool: "resolve_maintenance_issue",
+      status: "executed",
+      summary: 'Resolved maintenance issue "Leaky faucet"',
+    },
+  ]);
+});
+
 Deno.test("get_inventory is a read tool: no action entry, no audit noise in actions[]", async () => {
   const db = new FakeDb();
   db.inventoryItems.push({

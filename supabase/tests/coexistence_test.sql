@@ -96,10 +96,10 @@ declare
     'cleaning_tasks','component_replacements','devices','fermentation_logs',
     'fermentation_photos','fermentation_projects','food_items','grocery_items',
     'grocery_lists','household_members','household_preferences','household_supplies',
-    'households','inventory_items','inventory_locations','meal_plan_entries',
-    'meal_plans','memories','notification_deliveries','notification_preferences',
-    'notifications','recipe_ingredients','recipe_steps','recipes','record_history',
-    'recurrence_rules','reminder_rules','tracked_components'
+    'households','inventory_items','inventory_locations','maintenance_issues',
+    'meal_plan_entries','meal_plans','memories','notification_deliveries',
+    'notification_preferences','notifications','recipe_ingredients','recipe_steps',
+    'recipes','record_history','recurrence_rules','reminder_rules','tracked_components'
     -- NOTE: 'profiles' is deliberately excluded — both apps legitimately have
     -- one, by design; checked precisely by name+shape in step 1 instead.
   ];
@@ -116,11 +116,14 @@ end $$;
 do $$
 declare
   foodie_functions constant text[] := array[
-    'current_action_source','foodie_add_grocery_item','foodie_save_memory',
-    'handle_new_auth_user','handle_new_household','is_household_admin',
-    'is_household_member','leave_household','log_record_history',
+    'current_action_source','foodie_add_grocery_item','foodie_add_inventory_item',
+    'foodie_complete_cleaning_task','foodie_log_filter_replacement',
+    'foodie_remove_inventory_item','foodie_report_maintenance_issue',
+    'foodie_resolve_maintenance_issue','foodie_save_memory','foodie_skip_cleaning_task',
+    'foodie_update_inventory_item','handle_new_auth_user','handle_new_household',
+    'is_household_admin','is_household_member','leave_household','log_record_history',
     'protect_last_admin','redeem_household_invite','regenerate_invite_code',
-    'shares_household_with'
+    'resolve_inventory_location','shares_household_with'
     -- NOTE: 'set_updated_at' is deliberately excluded — checked precisely
     -- (existence + unchanged body) in step 2/3 instead, since both apps
     -- legitimately have one under that common name.
@@ -141,7 +144,7 @@ end $$;
 -- 7. Every expected Foodie table is present in `foodie`, exactly once.
 do $$
 declare
-  expected constant int := 33;
+  expected constant int := 34;
   actual int;
 begin
   select count(*) into actual from pg_tables where schemaname = 'foodie';

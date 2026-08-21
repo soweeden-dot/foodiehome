@@ -50,6 +50,10 @@ lib/
     foodie/   chat controller + provisional chat screen (Stream 3)
     inventory/  household inventory: list/search/filter, add/edit/remove,
                 approximate-level + quantity+unit + expiry tracking
+    home_care/  cleaning tasks (complete/skip, due-date + rollover display)
+                and apartment maintenance issues (report/resolve) at
+                "/home-care"; tracked filters/components (log replacement)
+                at "/supplies"
     shell/    production nav shell: phone bottom bar / tablet rail /
               Kitchen Mode chrome, destination list, route placeholders
     dashboard/  Home route boundary (Stream 5 builds the real cards)
@@ -62,6 +66,10 @@ key `device.kitchen_mode`) — never synced, never a household setting.
 Enabling it on one device cannot affect another. See ARCHITECTURE.md §4 for
 the full navigation/responsive/Kitchen Mode design.
 
-Feature screens beyond auth/shell/settings are PROVISIONAL placeholders
-until their own stream lands (Inventory, Recipes, Meal Plan, Fermentation,
-Home Care, Filters & Supplies).
+`domain/recurrence.dart` computes cleaning/filter due dates and rollover at
+read time (never stored) — the Dart half of the same algorithm as
+`supabase/functions/_shared/recurrence.ts` on the Foodie agent side.
+
+Feature screens beyond auth/shell/settings/inventory/home_care are
+PROVISIONAL placeholders until their own stream lands (Recipes, Meal Plan,
+Fermentation).

@@ -105,6 +105,14 @@ audited but not shown as user-visible actions.
 | `add_inventory_item` | mutate | `foodie_add_inventory_item` RPC (creates the named location on first use) |
 | `update_inventory_item` | mutate | `foodie_update_inventory_item` RPC — omitted fields are left unchanged; this call cannot explicitly clear a previously-set field back to empty (a documented scope limit, not a bug — see migration 14) |
 | `remove_inventory_item` | mutate | `foodie_remove_inventory_item` RPC — soft-deletes (`deleted_at`); a separate tool from `update_inventory_item` rather than a "removed" flag on it, since removal ("we used the last onion") is a distinct action from an ordinary field edit and deserves its own clear audit-trail entry |
+| `get_cleaning_status` | read | cleaning tasks + recurrence + last completion (RLS); `nextDueOn`/`overdue` are **computed** at read time via `recurrence.ts`, never stored |
+| `complete_cleaning_task` | mutate | `foodie_complete_cleaning_task` RPC — snapshots the task's current checklist |
+| `skip_cleaning_task` | mutate | `foodie_skip_cleaning_task` RPC — separate `outcome`, no completion row created; the task rolls over to the household's next cleaning day (see `docs/DECISIONS.md`) |
+| `get_filter_status` | read | tracked components + replacement history (RLS); due date computed the same way as cleaning |
+| `log_filter_replacement` | mutate | `foodie_log_filter_replacement` RPC — decrements `spares_count`, floored at 0 |
+| `get_maintenance_issues` | read | maintenance issues (RLS), optional status filter |
+| `report_maintenance_issue` | mutate | `foodie_report_maintenance_issue` RPC |
+| `resolve_maintenance_issue` | mutate | `foodie_resolve_maintenance_issue` RPC |
 
 Grocery and inventory writes were judged safe to include: the schema is
 complete for both, each write path is a single validated call through an
@@ -121,9 +129,13 @@ Foodie owns no scheduling and no cross-agent channel exists.
 
 ## Deferred (later streams)
 
-Domain tools beyond grocery/inventory (meal planning, cleaning, fermentation,
-filters, recipes, camera), proposed-action confirmation flow
-(`agent_actions.status='proposed'` exists but is recorded post-hoc
+Domain tools beyond grocery/inventory/cleaning/home-care (meal planning,
+fermentation, recipes, camera), household_supplies management UI/tools
+(consumables like detergent — schema exists from Stream 1, untouched this
+phase), SMS/Twilio delivery of due cleaning/filter/maintenance items
+(structured for it via `reminder_event_type` gaining `'cleaning_task_due'`,
+but no worker built — see `docs/DECISIONS.md`), proposed-action confirmation
+flow (`agent_actions.status='proposed'` exists but is recorded post-hoc
 `executed`/`failed` only), undo, memory-management UI, household-fact/
 historical memory population, response streaming, chat history loading in
 the client (the screen shows the live session; persistence already works
@@ -133,6 +145,6 @@ expiry/opened dates and notes, deferred — see the tool table above).
 
 ## Testing
 
-- `supabase/functions/tests/` (Deno, no network): orchestrator loop, handler auth/validation, tool validation — 29 tests including the "model cannot invent success", "history ≠ memory", and inventory-specific ("we used the last onion" removal, unknown-id update fails cleanly) properties.
-- `supabase/tests/foodie_test.sql` and `supabase/tests/inventory_test.sql`: RPC validation codes, foodie provenance in `record_history`, membership rejection, audit append-only, conversation/memory separation, location auto-create-and-reuse, partial-update semantics.
-- `app/test/chat_controller_test.dart`: reply/action rendering from server truth, structured error surfacing, conversation continuity.
+- `supabase/functions/tests/` (Deno, no network): orchestrator loop, handler auth/validation, tool validation, recurrence due-date/rollover computation — 48 tests including the "model cannot invent success", "history ≠ memory", inventory-specific ("we used the last onion" removal, unknown-id update fails cleanly), and cleaning/home-care ("Wednesday-only task rolls to today, not next Wednesday" rollover) properties.
+- `supabase/tests/foodie_test.sql`, `supabase/tests/inventory_test.sql`, and `supabase/tests/home_care_test.sql`: RPC validation codes, foodie provenance in `record_history`, membership rejection, audit append-only, conversation/memory separation, location auto-create-and-reuse, partial-update semantics, cleaning completion/skip, filter replacement, maintenance issue lifecycle.
+- `app/test/chat_controller_test.dart`, `app/test/home_care_controller_test.dart`, `app/test/home_care_screen_test.dart`, `app/test/recurrence_test.dart`: reply/action rendering from server truth, structured error surfacing, conversation continuity, cleaning/filter/maintenance controller behavior, due-date/rollover computation (Dart half, same algorithm as `recurrence.ts`).
