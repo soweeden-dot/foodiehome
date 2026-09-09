@@ -44,11 +44,21 @@ class DashboardSnapshot {
     required this.openMaintenanceIssues,
     required this.activeFermentationProjects,
     required this.sourdoughFeedStatuses,
+    this.itemCountByLocationKind = const {},
   });
 
   final int groceryUncheckedCount;
   final List<InventoryItem> expiringSoonItems;
   final List<InventoryItem> expiredItems;
+
+  /// Stocked-item counts grouped by `InventoryLocation.kind`
+  /// (pantry/fridge/freezer/other) — powers the dashboard's glanceable stat
+  /// tiles without the dashboard needing to know about locations directly.
+  final Map<String, int> itemCountByLocationKind;
+
+  int get fridgeCount => itemCountByLocationKind['fridge'] ?? 0;
+  int get freezerCount => itemCountByLocationKind['freezer'] ?? 0;
+  int get pantryCount => itemCountByLocationKind['pantry'] ?? 0;
 
   /// Cleaning tasks whose computed next-due date is today or earlier. Note:
   /// the rollover algorithm (recurrence.dart) already resolves a
@@ -106,6 +116,15 @@ DashboardSnapshot aggregateDashboard({
   final expiringSoon = inventory.items.where((i) => i.isExpiringSoon(asOf: now)).toList();
   final expired = inventory.items.where((i) => i.isExpired(asOf: now)).toList();
 
+  final locationKindByName = {
+    for (final location in inventory.locations) location.name: location.kind,
+  };
+  final itemCountByLocationKind = <String, int>{};
+  for (final item in inventory.items) {
+    final kind = locationKindByName[item.locationName] ?? 'other';
+    itemCountByLocationKind[kind] = (itemCountByLocationKind[kind] ?? 0) + 1;
+  }
+
   final cleaningDueOrOverdue = cleaningTasks.where((task) {
     final due = task.nextDueOn(asOf: now);
     return due != null && !due.isAfter(today);
@@ -143,5 +162,6 @@ DashboardSnapshot aggregateDashboard({
     openMaintenanceIssues: openIssues,
     activeFermentationProjects: fermentationProjects,
     sourdoughFeedStatuses: sourdoughStatuses,
+    itemCountByLocationKind: itemCountByLocationKind,
   );
 }
